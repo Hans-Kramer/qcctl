@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Copyright (c) 2026 Hans Kramer
+#
+# The gate from the README, run automatically. Two jobs: `check` is
+# self-contained, and `stage` exercises the packaging path, which has a hard
+# dependency on a cross-built qcstats from the sibling repository.
+
+name: gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchains
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc clang gcc-aarch64-linux-gnu
+
+      - name: Assert every toolchain is present
+        # `make check` SKIPS a compiler it cannot find, with a notice rather
+        # than a failure. That is right on a developer's machine and wrong
+        # here: a runner missing clang or the cross compiler would report a
+        # green gate while having checked a fraction of it.
+        run: |
+          for c in gcc clang aarch64-linux-gnu-gcc; do
+            command -v "$c" >/dev/null 2>&1 || { echo "::error::missing toolchain: $c"; exit 1; }
+            printf '%-24s %s\n' "$c" "$("$c" --version | head -1)"
+          done
+
+      - name: make check
+        # gcc, then clang, then the aarch64 cross build, all at
+        # -Wall -Wextra -Werror -O2. Leaves build/ native and populated.
+        run: make check
+
+      - name: Shell scripts parse
+        run: |
+          for s in scripts/install.sh scripts/uninstall.sh scripts/fan-release.sh; do
+            sh -n "$s" && echo "ok  $s"
+          done
+
+      - name: Installer help output is the header, not shell source
+        # Both installers print a line range of their own header. A range that
+        # drifts past the header leaks `set -u` and the SPDX line to the user.
+        run: |
+          for s in scripts/install.sh scripts/uninstall.sh; do
+            out=$(sh "$s" --help)
+            echo "$out" | grep -q 'SPDX' && { echo "::error file=$s::--help leaks the SPDX line"; exit 1; }
+            echo "$out" | grep -qE '^(set -u|[A-Z]+=[0-9])' && { echo "::error file=$s::--help leaks shell source"; exit 1; }
+            echo "ok  $s --help"
+          done
+
+      - name: Every file carries an SPDX identifier
+        # The project's own convention, enforced. This is what a REUSE lint
+        # would check; doing it inline keeps the zero-dependency promise.
+        run: |
+          rc=0
+          for f in $(git ls-files); do
+            case "$f" in
+              LICENSE|LICENSES/*) continue ;;
+            esac
+            grep -qI "SPDX-License-Identifier:" "$f" 2>/dev/null \
+              || { echo "::error file=$f::no SPDX-License-Identifier"; rc=1; }
+          done
+          exit $rc
+
+  stage:
+    # The packaging path is the only thing with a cross-repo dependency:
+    # `make stage` refuses to run until ../qcstats/qcstats exists and is an
+    # aarch64 binary. Kept as its own job so a failure here is legible as a
+    # packaging failure rather than a compilation one.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out qcctl
+        uses: actions/checkout@v4
+        with:
+          path: qcctl
+
+      - name: Check out the sibling qcstats
+        uses: actions/checkout@v4
+        with:
+          repository: Hans-Kramer/qcstats
+          path: qcstats
+
+      - name: Install toolchains
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc gcc-aarch64-linux-gnu
+
+      - name: Cross-build qcstats for the board
+        run: make -C qcstats cross
+
+      - name: make stage
+        # Verifies every staged binary is aarch64 and restores this tree to
+        # native on the way out. Exits non-zero if qcstats is missing or is a
+        # host binary, which is the failure this job exists to catch.
+        run: make -C qcctl stage
+
+      - name: Report what was staged
+        run: ls -l /tmp/qcctl-stage
