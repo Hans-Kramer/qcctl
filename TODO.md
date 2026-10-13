@@ -98,11 +98,6 @@ thing this project refuses to make.
 - **No CI.** `.github/` is empty, and git does not track empty directories, so a fresh clone
   has none at all.
 
-- **No License section in `README.md`.** The repo is tri-licensed — MPL-2.0 for `src/`, MIT for
-  the build and packaging glue, CC-BY-4.0 for prose and config — and every file carries an
-  `SPDX-License-Identifier`, but a reader cannot determine that from the README without opening
-  files. The sibling project states it plainly; this one should too.
-
 - **`surface-dump` is staged and architecture-checked but never installed.** Decide whether it
   is a shipped diagnostic or a development-only tool, and make the Makefile and the installer
   agree.

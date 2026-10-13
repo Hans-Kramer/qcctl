@@ -2,6 +2,28 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 Hans Kramer -->
 # qcctl
 
+> [!CAUTION]
+> **Pre-release: `v0.1.0-pre`. No release has been published.**
+>
+> `qcctl` and its companion [`qcstats`](https://github.com/Hans-Kramer/qcstats)
+> target **one board** — the Arduino Ventuno Q (QCS8275). Nothing else is
+> tested. This writes to CPU, GPU and thermal control points as root; on
+> unexpected hardware the validator refuses the config and the installer
+> refuses to install, but do not rely on that as a safety net.
+>
+> The gate in this tree is **compilation only**: `gcc`, `clang` and the
+> `aarch64` cross build at `-Wall -Wextra -Werror`. There is **no automated
+> behavioural test suite yet**. Every figure in these docs was measured on
+> hardware by hand, which is not the same as being re-checked on every change.
+>
+> Install, removal and reinstall have been exercised on hardware and removal
+> returns the board to stock. **Not verified: a cold boot, and suspend/resume —
+> this board resumes from neither sleep state.** Interfaces and config syntax
+> may change without notice before `0.1.0`. Known gaps are in
+> [`TODO.md`](TODO.md).
+>
+> Fit for a board you are willing to experiment with. Not for one you depend on.
+
 Power, clock and fan profiles for the **Arduino Ventuno Q** (Qualcomm QCS8275, board
 `monza`) — a command-line tool and a daemon for setting CPU, GPU and thermal policy on a
 board that ships with no supported way to do it.
@@ -284,6 +306,34 @@ that is an open item rather than a finished claim. See [`TODO.md`](TODO.md).
   `qcstats`, since there is nothing here to act on.
 - **No kernel modules.** Nothing here taints the kernel.
 - **One board.** Ventuno Q only. No Windows, no other hardware.
+
+---
+
+## License
+
+Three licences, chosen by what the file *is*:
+
+| | |
+|---|---|
+| `src/` — the tool and the daemon | **MPL-2.0** |
+| `Makefile`, `scripts/`, `systemd/` — build and packaging glue | **MIT** |
+| `README.md`, `docs/*.md`, `etc/*`, `polkit/*` — prose and data | **CC-BY-4.0** |
+
+Every file carries an `SPDX-License-Identifier`. Full texts are in [`LICENSE`](LICENSE)
+(MPL-2.0) and [`LICENSES/`](LICENSES/). **Code blocks inside the documentation are MIT**,
+not CC-BY-4.0 — paste a snippet into your own project and you owe no attribution.
+
+MPL-2.0 is *file-level* copyleft: patch one of these source files and publish that file.
+It stops there. Linking this code into proprietary software creates no obligation to open
+that software — static linking included — and new files you write alongside it stay yours.
+
+The packaging glue is MIT on purpose: a distribution packager has to modify the installer
+and the units, and should not inherit a copyleft obligation for doing so.
+
+**No CLA.** Contributions are inbound=outbound: your patch is licensed under whatever the
+file you touched already carries, and you keep your copyright.
+
+No third-party source is in this tree, so there is nothing to attribute.
 
 ---
 
