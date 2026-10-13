@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Copyright (c) 2026 Hans Kramer
+[Unit]
+Description=Re-apply the active qcctl after resume
+Documentation=file:/usr/share/doc/qcctl/USAGE.md
+# Governors, devfreq limits and trip points are not guaranteed to survive a suspend
+# cycle, so the profile that was in force is re-asserted.
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+# The Ventuno Q does not resume from suspend in either mode, so this never runs there.
+# Its presence is not evidence that suspend works on your board.
+
+[Service]
+Type=oneshot
+# Reads the profile name from /run/qcctl/active. Exits 0 having done nothing if absent.
+ExecStart=/usr/sbin/qcctl --reapply
+RemainAfterExit=no
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

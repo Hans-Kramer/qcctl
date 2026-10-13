@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Copyright (c) 2026 Hans Kramer
+[Unit]
+Description=qcctl daemon (power profiles and fan curve) for the Arduino Ventuno Q
+Documentation=file:/usr/share/doc/qcctl/USAGE.md
+# qcstats is a hard dependency: the daemon owns one instance and reads its stream.
+After=multi-user.target
+# Ordered after sysfsutils so an applied profile supersedes the vendor's boot governors.
+After=sysfsutils.service
+
+[Service]
+Type=simple
+# The pidfile sits inside RuntimeDirectory so systemd removes it on stop, leaving no
+# stale file after a SIGKILL. The daemon also detects a stale one itself.
+ExecStart=/usr/sbin/qcctld --foreground --pidfile /run/qcctl/pid
+# The backstop for a SIGKILL, which the in-process failsafe cannot survive: hand the
+# fan's thermal zone back to the kernel. Harmless if it was already released.
+ExecStopPost=/usr/sbin/qcctl-fan-release cpuss-0-0-thermal
+ExecStopPost=-/bin/rm -f /run/qcctl/pid
+# Kills the whole cgroup, so the qcstats child cannot be orphaned.
+KillMode=control-group
+Restart=on-failure
+RestartSec=5
+# Needs root: every control point is 644 root:root.
+User=root
+# Writes only to sysfs and its own state.
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+# /run for the pidfile, /var/lib for the boot-state snapshot.
+RuntimeDirectory=qcctl
+# 0755 is systemd's default and is stated here because it is load-bearing, not incidental:
+# the control socket inside this directory is mode 0666 so that an unprivileged caller can
+# ask for more cooling (see --cool-max), and that only works while the directory itself is
+# world-traversable. Tightening this to 0750 silently breaks emergency cooling.
+RuntimeDirectoryMode=0755
+StateDirectory=qcctl
+
+[Install]
+WantedBy=multi-user.target
