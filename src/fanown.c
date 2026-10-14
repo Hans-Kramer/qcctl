@@ -5,6 +5,7 @@
 #include "fanown.h"
 #include "io.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,7 +70,8 @@ int fanown_take(struct fanown *fo, const struct surface *s,
     return 0;
 }
 
-int fanown_release_point(const struct surface *s, const char *zone_name, long *out_mc)
+int fanown_release_point(const struct surface *s, const char *zone_name, long *out_mc,
+                         long *out_trip_mc)
 {
     const struct zone *z = surface_zone(s, zone_name);
     long best = -1, hyst = 0;
@@ -86,8 +88,79 @@ int fanown_release_point(const struct surface *s, const char *zone_name, long *o
     }
     if (best < 0)
         return 0;
-    *out_mc = best - hyst;
+    if (out_mc)
+        *out_mc = best - hyst;
+    if (out_trip_mc)
+        *out_trip_mc = best;
     return 1;
+}
+
+/* The cooling map's lower limit: the state the kernel itself brings this zone's fan to
+ * when the active trip fires. sysfs exposes no thermal instance bounds, so it comes from
+ * the device tree, where the property is <phandle, min, max> in big-endian cells. Returns
+ * -1 if it cannot be read. Only the first cooling-device entry of each map is consulted;
+ * matching several by phandle would need the cdev's own node, which is not needed here. */
+static int cooling_map_lower(const struct zone *z)
+{
+    char dir[PATH_MAXLEN], path[PATH_MAXLEN];
+    struct dirent *e;
+    DIR *d;
+    int lower = -1;
+
+    spath(dir, sizeof dir, "/proc/device-tree/thermal-zones/%.64s/cooling-maps", z->type);
+    d = opendir(dir);
+    if (!d)
+        return -1;
+    while ((e = readdir(d))) {
+        unsigned char cell[12];
+        FILE *f;
+
+        if (e->d_name[0] == '.')
+            continue;
+        if (snprintf(path, sizeof path, "%s/%.64s/cooling-device", dir, e->d_name)
+            >= (int)sizeof path)
+            continue;
+        f = fopen(path, "rb");
+        if (!f)
+            continue;
+        if (fread(cell, 1, sizeof cell, f) == sizeof cell) {
+            long min = ((long)cell[4] << 24) | ((long)cell[5] << 16) |
+                       ((long)cell[6] << 8)  | (long)cell[7];
+            /* Highest floor wins: if several maps drive this zone, the most cooling any of
+             * them asks for is the safe one to leave behind. */
+            if (min >= 0 && min <= 64 && min > lower)
+                lower = (int)min;
+        }
+        fclose(f);
+    }
+    closedir(d);
+    return lower;
+}
+
+enum fanown_release fanown_release_mode(const struct surface *s, const char *zone_name,
+                                        int have_temp, long temp_mc, int *out_state)
+{
+    const struct zone *z = surface_zone(s, zone_name);
+    long trip_mc = 0;
+    int lower;
+
+    if (out_state)
+        *out_state = -1;
+    if (!have_temp || !z || !fanown_release_point(s, zone_name, NULL, &trip_mc))
+        return FANOWN_LEAVE_MAX;
+    if (temp_mc < trip_mc) {
+        /* Trip clear: the kernel asks for no active cooling, and the next upward crossing
+         * raises the fan to the map's floor by itself - measured. */
+        if (out_state)
+            *out_state = 0;
+        return FANOWN_LEAVE_AS_IS;
+    }
+    lower = cooling_map_lower(z);
+    if (lower < 0)
+        return FANOWN_LEAVE_MAX;    /* floor unknown: more cooling is the safe guess */
+    if (out_state)
+        *out_state = lower;
+    return FANOWN_LEAVE_AS_IS;
 }
 
 int fanown_set(struct fanown *fo, int state)

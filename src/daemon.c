@@ -1060,29 +1060,31 @@ badarg:
                                mx, holds);
                     cur = mx;
                 } else if (holds == 0 && coolmax_owned) {
-                    long rp = 0;
                     /* We held the fan only for the request. Hand it back exactly as the
-                     * CLI does: below the governor's release point write 0, above it leave
-                     * the fan high. Never lower a hot board. */
-                    if (have_temp_seen &&
-                        fanown_release_point(&s, strat_zone(&strat), &rp) &&
-                        last_temp_mc < rp) {
-                        if (fanown_set(&rt, 0) < 0)
-                            logmsg("cool-max: could not set the fan to 0 (%s) - releasing "
-                                   "anyway, it stays where it is", strerror(errno));
-                        if (fanown_release(&rt, FANOWN_LEAVE_AS_IS) < 0)
-                            logmsg("cool-max RELEASE FAILED: %s", rt.release_err);
-                        else
-                            logmsg("cool-max: released; %ld.%ld C is below the %ld.%ld C "
-                                   "release point, fan set to 0",
-                                   last_temp_mc / 1000, (last_temp_mc % 1000) / 100,
-                                   rp / 1000, (rp % 1000) / 100);
-                    } else {
-                        if (fanown_release(&rt, FANOWN_LEAVE_MAX) < 0)
-                            logmsg("cool-max RELEASE FAILED: %s", rt.release_err);
-                        else
-                            logmsg("cool-max: released; fan LEFT at maximum");
-                    }
+                     * CLI does - one shared decision, because this logic was triplicated
+                     * and all three copies compared against the wrong threshold. */
+                    long trip_mc = 0;
+                    int want_state = -1;
+                    enum fanown_release how =
+                        fanown_release_mode(&s, strat_zone(&strat), have_temp_seen,
+                                            last_temp_mc, &want_state);
+
+                    fanown_release_point(&s, strat_zone(&strat), NULL, &trip_mc);
+                    if (want_state >= 0 && fanown_set(&rt, want_state) < 0)
+                        logmsg("cool-max: could not set the fan to %d (%s) - releasing "
+                               "anyway, it stays where it is", want_state, strerror(errno));
+                    if (fanown_release(&rt, how) < 0)
+                        logmsg("cool-max RELEASE FAILED: %s", rt.release_err);
+                    else if (how == FANOWN_LEAVE_MAX)
+                        logmsg("cool-max: released; fan LEFT at maximum (%s)",
+                               have_temp_seen ? "the kernel's own fan state could not be "
+                                                "read" : "no temperature");
+                    else
+                        logmsg("cool-max: released; fan set to state %d, what the kernel "
+                               "holds at %ld.%ld C (trip %ld.%ld C)",
+                               want_state,
+                               last_temp_mc / 1000, (last_temp_mc % 1000) / 100,
+                               trip_mc / 1000, (trip_mc % 1000) / 100);
                     coolmax_owned = 0;
                     cur = -1;
                 }

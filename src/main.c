@@ -279,7 +279,9 @@ static int cool_max_via_daemon(const char *sockpath)
     printf("cool-max: qcctld is cooling at maximum. No privilege needed - the\n");
     printf("cool-max: daemon does the work, and it can only ever RAISE cooling.\n");
     printf("cool-max: stop with Ctrl-C; the hold ends when this process exits, however\n");
-    printf("cool-max: it exits, so nothing is left pinned.\n");
+    printf("cool-max: it exits - the hold IS this connection. On release the daemon puts\n");
+    printf("cool-max: the fan back to the state the kernel itself would hold: off below\n");
+    printf("cool-max: the fan trip, the cooling map's floor at or above it.\n");
 
     /* THE HOLD IS THE CONNECTION, so the daemon going away ENDS IT - and this used to sit
      * in pause() for ever afterwards, still showing the message above. Someone who ran
@@ -531,19 +533,17 @@ static int fan_baseline_capture(const struct surface *s, const char *statusf,
 
 done:
     {
-        long temp_mc = 0, release_mc = 0;
+        long temp_mc = 0;
         int have_temp = status_temp_mc(statusf, &temp_mc);
-        int have_trip = fanown_release_point(s, COOLMAX_ZONE, &release_mc);
+        int want_state = -1;
+        enum fanown_release how =
+            fanown_release_mode(s, COOLMAX_ZONE, have_temp, temp_mc, &want_state);
 
-        if (have_temp && have_trip && temp_mc < release_mc) {
-            if (fanown_set(&fo, 0) < 0)
-                fprintf(stderr, "fan-baseline: could not set the fan to 0 (%s) - "
-                        "releasing anyway, it stays where it is\n", strerror(errno));
-            if (fanown_release(&fo, FANOWN_LEAVE_AS_IS) < 0)
-                fprintf(stderr, "fan-baseline: RELEASE FAILED: %s\n", fo.release_err);
-        } else if (fanown_release(&fo, FANOWN_LEAVE_MAX) < 0) {
+        if (want_state >= 0 && fanown_set(&fo, want_state) < 0)
+            fprintf(stderr, "fan-baseline: could not set the fan to %d (%s) - "
+                    "releasing anyway, it stays where it is\n", want_state, strerror(errno));
+        if (fanown_release(&fo, how) < 0)
             fprintf(stderr, "fan-baseline: RELEASE FAILED: %s\n", fo.release_err);
-        }
     }
     return rc;
 }
@@ -582,8 +582,9 @@ static int cool_max(const struct surface *s, const char *statusf)
     }
     printf("cool-max: fan at state %d of %d, zone%d taken from the kernel.\n",
            want, fo.max_state, fo.zone_idx);
-    printf("cool-max: stop with Ctrl-C or SIGTERM. The fan is left at maximum on exit;\n");
-    printf("cool-max: the kernel steps it down at its next trip crossing as the board cools.\n");
+    printf("cool-max: stop with Ctrl-C or SIGTERM. On exit the fan is set to the state\n");
+    printf("cool-max: the kernel itself would hold: 0 below the fan trip, the cooling\n");
+    printf("cool-max: map's floor at or above it. Nothing is left for it to walk back.\n");
 
     while (!coolmax_stop)
         pause();
@@ -601,40 +602,35 @@ static int cool_max(const struct surface *s, const char *statusf)
      * Warm board, or no reading available: leave it at maximum. Lowering it is the one
      * move that can do harm. */
     {
-        long temp_mc = 0, release_mc = 0;
+        long temp_mc = 0, trip_mc = 0;
         int have_temp = status_temp_mc(statusf, &temp_mc);
-        int have_trip = fanown_release_point(s, COOLMAX_ZONE, &release_mc);
+        int want_state = -1;
+        enum fanown_release how =
+            fanown_release_mode(s, COOLMAX_ZONE, have_temp, temp_mc, &want_state);
 
-        if (have_temp && have_trip && temp_mc < release_mc) {
-            /* Below the release point the governor's own target is 0 - measured: a zone
-             * handed back at 30 C goes to state 0. Write that rather than whatever the
-             * fan happened to be doing when we took it: the state we found can itself be
-             * wrong, and on hardware it was (left at maximum by an earlier run), so
-             * restoring it faithfully restored the mistake. */
-            if (fanown_set(&fo, 0) < 0)
-                fprintf(stderr, "cool-max: could not set the fan to 0 (%s) - releasing "
-                        "anyway, it stays where it is\n", strerror(errno));
-            if (fanown_release(&fo, FANOWN_LEAVE_AS_IS) < 0)
-                fprintf(stderr, "\ncool-max: RELEASE FAILED: %s\n", fo.release_err);
-            else
-            printf("\ncool-max: zone%d returned to the kernel. %ld.%ld C is below the "
-                   "%ld.%ld C release point, so the fan is set to 0 - which is what the "
-                   "governor wants there.\n",
-                   fo.zone_idx, temp_mc / 1000, (temp_mc % 1000) / 100,
-                   release_mc / 1000, (release_mc % 1000) / 100);
-        } else {
-            if (fanown_release(&fo, FANOWN_LEAVE_MAX) < 0)
-                fprintf(stderr, "\ncool-max: RELEASE FAILED: %s\n", fo.release_err);
-            else
+        fanown_release_point(s, COOLMAX_ZONE, NULL, &trip_mc);
+        if (want_state >= 0 && fanown_set(&fo, want_state) < 0)
+            fprintf(stderr, "cool-max: could not set the fan to %d (%s) - releasing "
+                    "anyway, it stays where it is\n", want_state, strerror(errno));
+        if (fanown_release(&fo, how) < 0)
+            fprintf(stderr, "\ncool-max: RELEASE FAILED: %s\n", fo.release_err);
+        else if (how == FANOWN_LEAVE_MAX) {
             printf("\ncool-max: zone%d returned to the kernel, fan LEFT at state %d.\n",
                    fo.zone_idx, want);
             if (!have_temp)
-                printf("cool-max: no temperature available (is qcctld running?), so "
-                       "the fan was not lowered - that is the safe direction.\n");
+                printf("cool-max: no temperature available (is qcctld running?), so the "
+                       "fan was not lowered - that is the safe direction.\n");
             else
-                printf("cool-max: %ld.%ld C is still at or above the release point; the "
-                       "kernel steps the fan down at its next crossing.\n",
-                       temp_mc / 1000, (temp_mc % 1000) / 100);
+                printf("cool-max: the kernel's own fan state for this zone could not be "
+                       "read, so the fan was not lowered - that is the safe direction.\n");
+            printf("cool-max: the kernel lowers it by one state per trip transition, "
+                   "which can take many heat/cool cycles.\n");
+        } else {
+            printf("\ncool-max: zone%d returned to the kernel, fan set to state %d - "
+                   "what the kernel itself holds at %ld.%ld C (trip %ld.%ld C), so "
+                   "nothing is left for it to walk back.\n",
+                   fo.zone_idx, want_state, temp_mc / 1000, (temp_mc % 1000) / 100,
+                   trip_mc / 1000, (trip_mc % 1000) / 100);
         }
     }
     return 0;

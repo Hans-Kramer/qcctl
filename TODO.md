@@ -31,12 +31,22 @@ thing this project refuses to make.
 
 ## Defects — fan and thermal
 
-- **`fan-release.sh` restores the zone but not the fan state.** After a `SIGKILL` with the fan
-  left low on a hot board, re-enabling the zone does not by itself force a re-evaluation: the
-  zone has no `polling_delay`, so the kernel waits for a trip crossing that may already have
-  passed. Hardening would be a `cur_state` write before `mode`. Strongly indicated — a written
-  state was observed holding for 12 s with the zone enabled and no crossing — but the decisive
-  above-the-trip test is still outstanding. **[measured, partially]**
+- **A fan state left behind is never reclaimed, and nothing corrects it.** A release now
+  hands the fan back in the state the kernel itself would hold, but a `SIGKILL` runs no
+  release at all, and `fan-release.sh` only re-enables the zone — it never writes
+  `cur_state`, and it does nothing at all when the zone is already enabled. The kernel does
+  not clean up after either: it rewrites a cooling device only when its own target changes,
+  so a value it would not have chosen sheds one state per heat/cool cycle, which on an idle
+  board is never. Measured — with the trip clear and the zone enabled, a fan forced to 10
+  held through 15 s of idling, 8 `emul_temp` writes and 10 `mode` disabled→enabled toggles.
+  One fix covers both paths and belongs in `qcctld`: watch for a `cur_state` higher than the
+  zone's thermal state justifies and correct it. Bounds from
+  `/proc/device-tree/thermal-zones/cpuss-0-0-thermal/cooling-maps/map-active`:
+  `cooling-device = <phandle, 4, THERMAL_NO_LIMIT>`. **[measured]**
+
+- **The cooling-map floor is read from only the first `cooling-device` entry of each map.**
+  One map with one cooling device is all this board has, so matching entries by phandle to
+  the cdev's own node was not needed. A zone binding several devices would need that.
 
 ---
 
@@ -63,7 +73,11 @@ thing this project refuses to make.
   lengths to avoid.
 
 - **`qcctld --foreground` is accepted and ignored.** There is no fork path at all, so the flag
-  promises a choice that does not exist. Either implement it or drop it.
+  promises a choice that does not exist. Either implement it or drop it. Confirmed 2026-10-14
+  that the shipped unit passes it: the running process is
+  `/usr/sbin/qcctld --foreground --pidfile /run/qcctl/pid`, so this is not a hypothetical
+  flag nobody uses — it is in the unit, doing nothing. The same `ps` line confirms the
+  pidfile mismatch above. **[measured]**
 
 ---
 
