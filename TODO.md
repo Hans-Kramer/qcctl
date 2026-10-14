@@ -57,9 +57,11 @@ thing this project refuses to make.
   and narrates it as hand-launched. Real runs are correct — the stop has happened by then.
   **[measured]**
 
-- **Pidfile path mismatch.** `daemon.c` defaults to `/run/qcctld.pid`; the unit passes
-  `--pidfile /run/qcctl/pid`. A hand-started daemon with no flag uses a different pidfile, so
-  the two-writer guard does not see the other process.
+- **`publish_status()` fails silently.** If the status file cannot be opened it simply
+  returns, so a consumer sees a missing or stale file with nothing in the journal to say
+  why. The default pidfile now creates `/run/qcctl` when systemd has not, so this only
+  bites when `--status-file` points somewhere unwritable — but a failure that explains
+  itself once would still be better than none.
 
 - **The disruptive gate is file-wide but checked per-apply.** `config_validate` collects
   disruptive actions across every profile, so adding `CPU_ONLINE 0 0` to an *unused* profile

@@ -10,9 +10,9 @@ After=sysfsutils.service
 
 [Service]
 Type=simple
-# The pidfile sits inside RuntimeDirectory so systemd removes it on stop, leaving no
-# stale file after a SIGKILL. The daemon also detects a stale one itself.
-ExecStart=/usr/sbin/qcctld --foreground --pidfile /run/qcctl/pid
+# No --pidfile here: the daemon already defaults to /run/qcctl/pid, inside this
+# RuntimeDirectory, so systemd removes it on stop. Restating it is how the two drifted.
+ExecStart=/usr/sbin/qcctld --foreground
 # The backstop for a SIGKILL, which the in-process failsafe cannot survive: hand the
 # fan's thermal zone back to the kernel. Harmless if it was already released.
 ExecStopPost=/usr/sbin/qcctl-fan-release cpuss-0-0-thermal

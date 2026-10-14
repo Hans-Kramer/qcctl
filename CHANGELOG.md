@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The guard against two daemons sharing the fan never fired.** `qcctld` defaulted its
+  pidfile to `/run/qcctld.pid` while the unit passed `--pidfile /run/qcctl/pid`, so a
+  hand-started daemon and the unit's each created a pidfile the other could not see, and
+  both ran. The default is now `/run/qcctl/pid` — inside the unit's `RuntimeDirectory`,
+  alongside the control socket and the status file — and the unit no longer restates it, so
+  one declaration can no longer drift from another. A daemon started outside systemd creates
+  that directory itself, which also gets it a working `active` and `status` file instead of
+  two write failures.
+
+  A pidfile that cannot be created for some other reason — a missing directory, a permission
+  failure — no longer reports that another daemon is running.
+
 - **`uninstall.sh` never checked that `qcctl --reset` worked.** It called it through a helper
   that discards every error, so a failed reset still ended in `REMOVED cleanly` with
   governors, frequency caps, `uclamp` values and offline cores left modified — and with the

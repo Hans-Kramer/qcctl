@@ -31,11 +31,14 @@
 #include <fcntl.h>
 #include <time.h>
 #include <stdarg.h>
+#include <sys/stat.h>
 
 #define DEF_CONF    "/etc/qcctl/profiles.conf"
 #define DEF_FAN     "/etc/qcctl/fan.config"
 #define DEF_STATE   "/var/lib/qcctl/boot-state"
-#define DEF_PIDFILE "/run/qcctld.pid"
+/* Inside the unit's RuntimeDirectory with the socket and the status file, so systemd
+ * removes it on stop and the two-writer guard only ever compares one path. */
+#define DEF_PIDFILE "/run/qcctl/pid"
 /* The name of the profile currently in force. Written so that something which is not
  * the daemon - the resume hook - can re-apply it without IPC. */
 #define DEF_ACTIVE  "/run/qcctl/active"
@@ -506,6 +509,23 @@ static int pidfile_is_stale(const char *path)
     return strcmp(comm, "qcctld") != 0;
 }
 
+/* RuntimeDirectory= covers the unit; a hand-started daemon has to make this itself. 0755
+ * is load-bearing: the 0666 control socket inside needs a traversable directory. */
+static void ensure_rundir(const char *path)
+{
+    char dir[PATH_MAXLEN];
+    char *slash;
+
+    if (snprintf(dir, sizeof dir, "%s", path) >= (int)sizeof dir)
+        return;
+    slash = strrchr(dir, '/');
+    if (!slash || slash == dir)
+        return;
+    *slash = '\0';
+    if (mkdir(dir, 0755) == 0)
+        logmsg("created %s - no RuntimeDirectory, so this was started outside systemd", dir);
+}
+
 static int pidfile_create(const char *path)
 {
     char buf[32];
@@ -746,10 +766,15 @@ badarg:
         return 3;
     }
 
+    ensure_rundir(pidf);
     if (pidfile_create(pidf) < 0) {
-        fprintf(stderr, "cannot create %s: %s\n", pidf, strerror(errno));
-        fprintf(stderr, "  another qcctld may be running; "
-                        "two writers must not share the fan\n");
+        int e = errno;
+        fprintf(stderr, "cannot create %s: %s\n", pidf, strerror(e));
+        /* Only EEXIST means another writer. Reporting one for a missing directory or a
+         * permission failure sends the operator hunting a process that is not there. */
+        if (e == EEXIST)
+            fprintf(stderr, "  another qcctld is running; "
+                            "two writers must not share the fan\n");
         return 4;
     }
     made_pid = 1;
