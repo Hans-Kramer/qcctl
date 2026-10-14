@@ -38,11 +38,6 @@ thing this project refuses to make.
   state was observed holding for 12 s with the zone enabled and no crossing — but the decisive
   above-the-trip test is still outstanding. **[measured, partially]**
 
-- **`fanown_take()` can disable a zone it will never re-enable.** An unreadable `mode` at take
-  time leaves the captured value empty, and the restore is then skipped entirely. For `qcctld`
-  the unit's `ExecStopPost` covers it; the `--cool-max` and `--fan-baseline capture` CLI paths
-  have no such backstop.
-
 ---
 
 ## Defects — other

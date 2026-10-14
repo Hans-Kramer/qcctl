@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 struct fanown {
-    char zone_mode_before[NAME_LEN];    // "" = never read, so never restored
+    char zone_mode_before[NAME_LEN];    // always "enabled" when owned; take refuses otherwise
     char fan_state_before[NAME_LEN];
     int  zone_idx;
     int  cdev_idx;

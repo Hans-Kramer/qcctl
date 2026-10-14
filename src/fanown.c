@@ -28,18 +28,33 @@ int fanown_take(struct fanown *fo, const struct surface *s,
     fo->zone_idx = z->idx;
     fo->cdev_idx = cd->idx;
 
+    /* The mode we must write back. Without it the release below would skip the zone and
+     * leave nothing managing the fan, so an unreadable mode refuses the take outright. */
     spath(path, sizeof path, THERMAL_DIR "/thermal_zone%d/mode", z->idx);
-    if (read_file_str(path, fo->zone_mode_before, sizeof fo->zone_mode_before) < 0)
-        fo->zone_mode_before[0] = '\0';
+    if (read_file_str(path, fo->zone_mode_before, sizeof fo->zone_mode_before) < 0) {
+        /* read_file_str() conflates "cannot open" with "read nothing", and an empty
+         * sysfs attribute is the likelier of the two here - so no strerror, which
+         * would report a stale errno from some earlier call. */
+        snprintf(err, errlen,
+                 "zone %d (%s) mode is unreadable or empty - refusing to disable a zone "
+                 "that cannot be handed back", z->idx, zone_name);
+        return -1;
+    }
     spath(path, sizeof path, THERMAL_DIR "/cooling_device%d/cur_state", cd->idx);
     if (read_file_str(path, fo->fan_state_before, sizeof fo->fan_state_before) < 0)
         fo->fan_state_before[0] = '\0';
 
-    // Refuse if someone already holds it.
-    if (!strcmp(fo->zone_mode_before, "disabled")) {
-        snprintf(err, errlen,
-                 "zone %d (%s) is already disabled - something else owns the fan",
-                 z->idx, zone_name);
+    /* Only "enabled" is takeable: "disabled" means someone already owns it, and anything
+     * else is not the ABI this restores against. */
+    if (strcmp(fo->zone_mode_before, "enabled")) {
+        if (!strcmp(fo->zone_mode_before, "disabled"))
+            snprintf(err, errlen,
+                     "zone %d (%s) is already disabled - something else owns the fan",
+                     z->idx, zone_name);
+        else
+            snprintf(err, errlen,
+                     "zone %d (%s) mode reads '%s', not 'enabled' - refusing to take a "
+                     "zone this cannot restore", z->idx, zone_name, fo->zone_mode_before);
         return -1;
     }
 

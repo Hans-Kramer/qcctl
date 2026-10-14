@@ -32,6 +32,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`fanown_take()` could disable a thermal zone it would never re-enable.** An unreadable
+  `mode` was swallowed into an empty string, which defeated two things: the guard that
+  refuses a zone another process already owns, and the restore, which is skipped when nothing
+  was captured. It wrote `disabled`, took ownership and handed nothing back — leaving nothing
+  managing the fan, since the zone carries no `polling_delay`. It now refuses to take a zone
+  unless it has read a mode it understands.
+
 - **`uninstall.sh` never checked that `qcctl --reset` worked.** It called it through a helper
   that discards every error, so a failed reset still ended in `REMOVED cleanly` with
   governors, frequency caps, `uclamp` values and offline cores left modified — and with the
