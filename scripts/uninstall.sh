@@ -12,10 +12,17 @@
 # PREEXISTING matters most for qcstats: a hard dependency from another project, so it is
 # removed only if this installer put it there.
 #
+# Nothing is removed until the board is verified back to stock: the fan's zone and every
+# value `qcctl --reset` restores are read back and compared against the snapshot.
+#
 # Usage: uninstall.sh [--dry-run] [--purge] [--force]
 #   --dry-run  print what would happen, change nothing
 #   --purge    also remove /etc/qcctl (user-edited config is kept by default)
-#   --force    proceed with the built-in path list when no manifest exists
+#   --force    proceed past a refusal: use the built-in path list when no manifest
+#              exists, and remove the files even when the board is not back to stock
+#
+# Exit: 0 removed   1 incomplete, or unsafe to continue   2 bad argument
+#       3 no manifest and no --force   4 the board is not back to stock
 #
 # Installed as /usr/sbin/qcctl-uninstall, and removes itself while running.
 set -u
@@ -27,12 +34,13 @@ for a in "$@"; do
         --purge)   PURGE=1 ;;
         --force)   FORCE=1 ;;
         # --help prints the header block above; this range tracks it.
-        -h|--help) sed -n '5,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '5,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "uninstall.sh: unknown argument '$a'" >&2; exit 2 ;;
     esac
 done
 
 MANIFEST=/var/lib/qcctl/install.manifest
+STATEF=/var/lib/qcctl/boot-state   # what --reset restores from; step 5 removes it
 VENDOR=/etc/sysfs.d/50-dragonwing-defaults.conf
 FANZONE=cpuss-0-0-thermal
 
@@ -108,13 +116,99 @@ if [ "$DRY" = 0 ] && [ -n "$ZONE" ]; then
 fi
 
 # --------------------------------------------- 3. reset the control surface to stock
-# Must happen while the binary still exists. After this the board is back to its boot
-# defaults - including the vendor's policy2 bug, which is the correct stock state.
+# Must run while the binary and the snapshot both exist - step 5 removes them. Restores
+# the boot defaults, vendor policy2 bug included. Not through run(), which swallows
+# errors: a failed reset here must not become "REMOVED cleanly".
 note "3. resetting clocks and governors to stock"
-if [ -x /usr/sbin/qcctl ]; then
-    run /usr/sbin/qcctl --reset
+RESET_OK=0
+RESET_NOTE="not attempted"
+
+# refuse <message> - stop before anything is removed, unless the operator insisted.
+refuse() {
+    if [ "$FORCE" = 1 ]; then
+        warn "--force given: removing the files anyway, with the board NOT back to stock."
+        return 0
+    fi
+    warn "Nothing has been removed: /usr/sbin/qcctl and $STATEF are both still here,"
+    warn "so this is fixable. Deal with the above and re-run, or pass --force to remove"
+    warn "the files anyway and leave the board modified."
+    die "$1" 4
+}
+
+if [ ! -x /usr/sbin/qcctl ]; then
+    if [ -f "$STATEF" ]; then
+        warn "/usr/sbin/qcctl is gone but $STATEF is not, so the control surface WAS"
+        warn "changed and nothing left on this board can revert it. Replay it by hand:"
+        warn "  grep -v '^#' $STATEF | grep -v cooling_device |"
+        warn "    while IFS=\"\$(printf '\\t')\" read -r p v; do echo \"\$v\" > \"\$p\"; done"
+        warn "(cooling_device lines are skipped, as --reset skips them: a fan state is"
+        warn "the governor's output, and replaying one can leave the board uncooled.)"
+        RESET_NOTE="qcctl binary absent, snapshot left unreplayed"
+    else
+        note "   /usr/sbin/qcctl absent and no snapshot - nothing to reset with"
+        RESET_NOTE="nothing was ever recorded to reset"
+    fi
+elif [ ! -f "$STATEF" ]; then
+    # An install that died before step 9 leaves this, and it must not block removal.
+    note "   no snapshot at $STATEF - nothing to restore, nothing to verify against"
+    RESET_NOTE="no boot-state snapshot existed"
+elif [ "$DRY" = 1 ]; then
+    echo "    would: /usr/sbin/qcctl --reset"
+    echo "    would: read back and compare $(grep -v '^#' "$STATEF" 2>/dev/null |
+                                              grep -vc cooling_device) snapshot values"
 else
-    note "   /usr/sbin/qcctl absent - nothing to reset with"
+    if RESET_OUT=$(/usr/sbin/qcctl --reset 2>&1); then
+        note "   $RESET_OUT"
+        RESET_OK=1
+    else
+        rc=$?
+        warn "qcctl --reset FAILED (exit $rc):"
+        printf '%s\n' "$RESET_OUT" | sed 's/^/     /'
+        RESET_NOTE="qcctl --reset failed"
+        refuse "the control surface is still modified and --reset could not undo it"
+    fi
+fi
+
+# --reset reports what it wrote; this reports what the board now reads, which differs
+# whenever the kernel accepts a write and clamps it. One awk: a shell loop is 312 forks.
+if [ "$RESET_OK" = 1 ]; then
+    VOUT=$(awk -F'\t' '
+        /^#/   { next }
+        NF < 2 { next }
+        # The substrings is_governor_output() tests, so this cannot skip a different set.
+        index($1, "/cooling_device") && index($1, "/cur_state") { next }
+        {
+            if ((getline got < $1) <= 0) { close($1); un++; next }
+            close($1)
+            sub(/[ \t\r]+$/, "", got)
+            if (got == $2) { ok++ }
+            else { bad++; if (bad <= 10) printf "MISMATCH %s now=\"%s\" boot=\"%s\"\n", $1, got, $2 }
+        }
+        END { printf "SUMMARY %d %d %d\n", ok + 0, bad + 0, un + 0 }
+    ' "$STATEF" 2>/dev/null)
+    printf '%s\n' "$VOUT" | sed -n 's/^MISMATCH /  !! /p'
+    SUM=$(printf '%s\n' "$VOUT" | sed -n 's/^SUMMARY //p')
+    v_ok=${SUM%% *}; v_rest=${SUM#* }; v_bad=${v_rest%% *}; v_un=${v_rest#* }
+    v_ok=${v_ok:-0}; v_bad=${v_bad:-0}; v_un=${v_un:-0}
+    [ "$v_bad" -gt 10 ] && warn "($((v_bad - 10)) further mismatch(es) not listed)"
+    if [ "$v_ok" = 0 ]; then
+        warn "read back NOTHING from $STATEF - this verified nothing, so treat the"
+        warn "reset as unproven rather than as passed."
+        RESET_OK=0; RESET_NOTE="read-back verified nothing"
+        refuse "the reset could not be verified"
+    elif [ "$v_bad" != 0 ]; then
+        warn "$v_bad of $((v_ok + v_bad)) value(s) do NOT match $STATEF after --reset."
+        warn "--reset reported success, so these are writes the kernel accepted and then"
+        warn "did not honour. The board is not back to stock."
+        RESET_OK=0; RESET_NOTE="$v_bad value(s) did not match the snapshot"
+        refuse "the board does not match its boot state"
+    else
+        if [ "$v_un" != 0 ]; then
+            note "   verified: $v_ok value(s) match the snapshot ($v_un no longer readable)"
+        else
+            note "   verified: all $v_ok restored value(s) match the snapshot"
+        fi
+    fi
 fi
 
 # ---------------------------------------------------------------- 4. disable the units
@@ -236,7 +330,14 @@ note "   zone mode: $(cat "$ZONE" 2>/dev/null)   fan state: ${cd_state:-unknown}
 echo ""
 if [ "$left" = 0 ]; then
     echo "  REMOVED cleanly. owned=$removed config=$cfg preexisting=$kept"
-    echo "  The board is back to stock, vendor policy2 bug included - that is correct."
+    # Removed and reverted are two claims, not one.
+    if [ "$RESET_OK" = 1 ]; then
+        echo "  The board is back to stock and was read back to prove it, vendor policy2"
+        echo "  bug included - that is correct."
+    else
+        echo "  NOT verified back to stock: $RESET_NOTE."
+        echo "  The files are gone; the control surface may still be modified."
+    fi
 else
     echo "  INCOMPLETE: $left item(s) remain. See above."
     exit 1

@@ -54,6 +54,12 @@ touched. To undo it:
 sudo qcctl-uninstall          # --purge also removes /etc/qcctl
 ```
 
+Removal refuses to delete anything until the board is verified back to stock: the fan's
+zone is handed to the kernel and read back, and every value `qcctl --reset` restores is
+read back and compared against the snapshot it came from. A mismatch stops the uninstall
+while the binary and the snapshot are both still there to fix it with, and exits 4;
+`--force` removes the files anyway.
+
 **Everything the build produces lands in `build/`.** Nothing is written to the source tree,
 so `make clean` is one `rm -rf` and a stale binary cannot sit beside a source file
 pretending to be current.

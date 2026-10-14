@@ -12,13 +12,12 @@ anything else is read from the source and not yet confirmed on hardware.
 Removal matters more than install here, because a durable change you cannot reverse is the
 thing this project refuses to make.
 
-- **`uninstall.sh` never verifies that `qcctl --reset` worked.** It runs through a helper that
-  swallows every error (`"$@" >/dev/null 2>&1 || true`). The *fan* path is verified and `die`s
-  correctly; the clock path is not. So a failed reset would still report "REMOVED cleanly"
-  with governors, frequency caps, `uclamp` values and offline cores still modified.
-  `install.sh` already contains the three-line governor-readback loop that would close this.
-  `--reset` itself is correct — it restored 312 values and reverted `policy2` to stock
-  `ondemand` on demand. **[measured]**
+- **An uninstall destroys the fan baseline.** `/var/lib/qcctl/fan-baseline` sits inside an
+  `OWNED` directory, so a plain uninstall removes it while `--purge` is still being offered
+  as the destructive option. It is measured data that costs a ~2-minute fan-driving capture
+  to replace, and `airflow` reports `null` until it is back — the same "user's work, not
+  ours" argument that makes `profiles.conf` `CONFIG`. Observed during the read-back test on
+  2026-10-13: a verified-clean uninstall and reinstall left the baseline gone. **[measured]**
 
 - **The `--force` path leaks `OWNED` paths.** The fallback list omits
   `/usr/share/doc/qcctl/USAGE.md`, that directory, and both `/etc/qcctl/*.dist` files.
@@ -48,6 +47,11 @@ thing this project refuses to make.
 
 ## Defects — other
 
+- **`--dry-run` claims a systemd-managed daemon is "outside systemd".** Step 1 does not
+  actually stop the unit in a dry run, so the `pgrep` that follows finds the running daemon
+  and narrates it as hand-launched. Real runs are correct — the stop has happened by then.
+  **[measured]**
+
 - **Pidfile path mismatch.** `daemon.c` defaults to `/run/qcctld.pid`; the unit passes
   `--pidfile /run/qcctl/pid`. A hand-started daemon with no flag uses a different pidfile, so
   the two-writer guard does not see the other process.
@@ -57,8 +61,9 @@ thing this project refuses to make.
   would make every `-m` demand `--allow-disruptive`.
 
 - **No read-back verification on any write.** `write_path_str` checks the byte count and
-  `close()` only. A value the kernel silently clamps commits successfully, and the drift
-  baseline then records what was *accepted* rather than what was requested — so clamping is
+  `close()` only — `uninstall.sh` now reads back after `--reset`, but nothing else does. A
+  value the kernel silently clamps commits successfully, and the drift baseline then
+  records what was *accepted* rather than what was requested — so clamping is
   invisible to the drift watch, which is the one failure the staged min/max writes go to such
   lengths to avoid.
 
@@ -91,12 +96,10 @@ thing this project refuses to make.
 ## Gaps
 
 - **No automated behavioural gate.** `make check` is a compilation gate — gcc, clang and the
-  aarch64 cross build, `-Wall -Wextra -Werror` at `-O2` — and passes. `QCCTL_SYSROOT` plus the
-  `.manifest` mechanism already carry real modes and owners for a copied tree, so a suite would
-  need no board and no root. The hook is built and unused.
-
-- **No CI.** `.github/` is empty, and git does not track empty directories, so a fresh clone
-  has none at all.
+  aarch64 cross build, `-Wall -Wextra -Werror` at `-O2` — and passes; CI runs it, and stages
+  a cross-built package, on every push. `QCCTL_SYSROOT` plus the `.manifest` mechanism
+  already carry real modes and owners for a copied tree, so a suite would need no board and
+  no root. The hook is built and unused.
 
 - **`surface-dump` is staged and architecture-checked but never installed.** Decide whether it
   is a shipped diagnostic or a development-only tool, and make the Makefile and the installer
@@ -126,8 +129,6 @@ thing this project refuses to make.
   in the unit and in `install.sh`, which compare against it directly. Every lookup accepts
   both, `fan-release.sh` included. Documented in `docs/USAGE.md`.
 - **The polkit action is `io.github.hans_kramer.qcctl.manage`**, in a namespace this project
-  controls. It was previously `org.arduino.qcctl.manage`, which asserted a namespace belonging
-  to Arduino and contradicted the trademark disclaimer.
-- **The name stays `qcctl`**, pairing with `qcstats`. A rename would also churn three
-  filesystem namespaces and the polkit action id, which a GUI will hardcode.
+  controls rather than one belonging to Arduino. A GUI will hardcode it, so it is not a
+  string to change casually.
 - **No `CONTRIBUTING.md`.**
