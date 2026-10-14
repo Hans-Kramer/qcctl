@@ -37,9 +37,6 @@ BIN4 := $(B)/qcctld
 STAGE   ?= /tmp/qcctl-stage
 QCSTATS ?= ../qcstats/qcstats
 
-CONF    ?= etc/profiles.conf
-FANCONF ?= etc/fan.config
-
 all: $(BIN) $(BIN2) $(BIN3) $(BIN4)
 
 $(BIN): $(B)/src/surface_dump.o $(OBJ_COMMON)

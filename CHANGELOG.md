@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`uninstall.sh`'s closing verdict states "removed" and "reverted" separately,** and claims
   the second only when the read-back proved it. `--help` now lists its exit codes.
 
+### Removed
+
+- **`CONF` and `FANCONF` from the `Makefile`.** They sat beside `STAGE` and `QCSTATS` in the
+  same `?=` form that makes those two overridable, but nothing read them: both stage targets
+  copy `etc/profiles.conf` and `etc/fan.config` literally. Wiring them up would have been
+  worse than deleting them — `install.sh` never overwrites an existing config, so an override
+  would land on a fresh install but on an upgrade replace only the `.dist` reference copy,
+  which is what the installer diffs the live config against when it warns about blocks a
+  release ships and the config lacks.
+
 ### Fixed
 
 - **The guard against two daemons sharing the fan never fired.** `qcctld` defaulted its

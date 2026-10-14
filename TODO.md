@@ -85,8 +85,6 @@ thing this project refuses to make.
 
 ## Config and text
 
-- **`Makefile` defines `CONF` and `FANCONF` and never uses them.**
-
 - **Unreferenced `fan.config` blocks.** Curves `quiet` and `sustained` and target `held40` are
   named by no profile. The `quiet` *profile* uses `FAN MODE kernel`, so the similarly-named
   `quiet` *curve* is unreachable — a name collision across two files that invites exactly the
