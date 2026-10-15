@@ -23,24 +23,31 @@ thing this project refuses to make.
   `/usr/share/doc/qcctl/USAGE.md`, that directory, and both `/etc/qcctl/*.dist` files.
 
 - **`/tmp` leak, and an upgrade hazard.** The previous manifest is copied to a `mktemp` file
-  that is never removed, so each `--upgrade` leaves one behind. More seriously, an upgrade
-  that dies between truncating the manifest and re-recording it loses all prior ownership
-  information, and a later uninstall will leave formerly-`OWNED` paths behind.
+  that is never removed, so each `--upgrade` leaves one behind — and that copy is the only
+  record of the prior install's ownership, since step 2 truncates the real manifest. An
+  upgrade that dies after the truncate and before re-recording a path therefore loses it:
+  the file stays on disk, no manifest claims it, and a later uninstall reports
+  `REMOVED cleanly` while leaving it behind. Narrower than it first looks — the pre-flight
+  checks staging completeness and binary architecture *before* the truncate, so the likely
+  failures are caught first, and what remains is an I/O failure during steps 3–5. The
+  consequence is still permanent and silent, and it falsifies the installer's own header:
+  "an install that dies halfway is still fully removable".
 
 ---
 
 ## Defects — fan and thermal
 
-- **A fan state left behind is never reclaimed, and nothing corrects it.** A release now
-  hands the fan back in the state the kernel itself would hold, but a `SIGKILL` runs no
-  release at all, and `fan-release.sh` only re-enables the zone — it never writes
-  `cur_state`, and it does nothing at all when the zone is already enabled. The kernel does
-  not clean up after either: it rewrites a cooling device only when its own target changes,
-  so a value it would not have chosen sheds one state per heat/cool cycle, which on an idle
-  board is never. Measured — with the trip clear and the zone enabled, a fan forced to 10
-  held through 15 s of idling, 8 `emul_temp` writes and 10 `mode` disabled→enabled toggles.
-  One fix covers both paths and belongs in `qcctld`: watch for a `cur_state` higher than the
-  zone's thermal state justifies and correct it. Bounds from
+- **A `SIGKILL`, or `fan-release.sh`, can leave the fan at a state nothing will correct.**
+  Releases are covered — one now hands the fan back in the state the kernel itself would
+  hold — but a `SIGKILL` runs no release at all, and `fan-release.sh` only re-enables the
+  zone: it never writes `cur_state`, and it is a silent no-op when the zone is already
+  enabled, which is exactly the state a stuck fan is in. The kernel does not clean up after
+  either, because it rewrites a cooling device only when its own target changes, so a value
+  it would not have chosen sheds one state per heat/cool cycle — on an idle board, never.
+  Measured: with the trip clear and the zone enabled, a fan forced to 10 held through 15 s
+  of idling, 8 `emul_temp` writes and 10 `mode` disabled→enabled toggles. One fix covers
+  both paths and belongs in `qcctld` — watch for a `cur_state` higher than the zone's
+  thermal state justifies and correct it. Bounds from
   `/proc/device-tree/thermal-zones/cpuss-0-0-thermal/cooling-maps/map-active`:
   `cooling-device = <phandle, 4, THERMAL_NO_LIMIT>`. **[measured]**
 
@@ -89,11 +96,6 @@ thing this project refuses to make.
   near 42 °C under full CPU load, so the points at 50, 65 and 75 °C are decorative; the curve
   correctly held state 4 across a 56 s full-load run. Either trim the curve to the real
   envelope or say in `fan.config` that the upper points are headroom. **[measured]**
-
-- **An existing `/var/lib/qcctl/fan-baseline` may carry a `pwr_profile` header** from before
-  the project was renamed, advising re-capture with a binary of that name. The string is absent
-  from the source and from the built binary, so re-capturing rewrites the header correctly.
-  **[measured]**
 
 ---
 
