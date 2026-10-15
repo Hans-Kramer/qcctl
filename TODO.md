@@ -19,9 +19,6 @@ thing this project refuses to make.
   ours" argument that makes `profiles.conf` `CONFIG`. Observed during the read-back test on
   2026-10-13: a verified-clean uninstall and reinstall left the baseline gone. **[measured]**
 
-- **The `--force` path leaks `OWNED` paths.** The fallback list omits
-  `/usr/share/doc/qcctl/USAGE.md`, that directory, and both `/etc/qcctl/*.dist` files.
-
 - **`/tmp` leak, and an upgrade hazard.** The previous manifest is copied to a `mktemp` file
   that is never removed, so each `--upgrade` leaves one behind — and that copy is the only
   record of the prior install's ownership, since step 2 truncates the real manifest. An

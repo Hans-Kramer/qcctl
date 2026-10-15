@@ -60,6 +60,35 @@ jobs:
             echo "ok  $s --help"
           done
 
+      - name: Every OWNED path is known to the uninstaller
+        # install.sh records what it creates in a manifest, but --force exists for when no
+        # manifest survives, and then uninstall.sh falls back to a hand-written list. A path
+        # the installer creates and that list omits is one --force leaves behind for good.
+        # Matches anywhere in uninstall.sh, so a path named only in a comment would pass -
+        # loose on purpose, since the alternative is parsing a shell array.
+        run: |
+          I=scripts/install.sh; U=scripts/uninstall.sh
+          STATE=$(sed -n 's/^STATE=//p' "$I")
+          ETC=$(sed -n 's/^ETC=//p' "$I")
+          UNITDIR=$(sed -n 's/^UNITDIR=//p' "$I")
+          rc=0
+          dests=$(
+            grep -E '^[[:space:]]*(\[[^]]*\][[:space:]]*&&[[:space:]]*)?put ' "$I" |
+              grep -v 'CONFIG[[:space:]]*$' |
+              sed -E 's/.*put[[:space:]]+[0-7]+[[:space:]]+("[^"]*"|[^[:space:]]+)[[:space:]]+//' |
+              sed -E 's/[[:space:]].*$//; s/"//g; s/\\$//'
+            grep -E 'record OWNED' "$I" |
+              sed -E 's/.*record OWNED[[:space:]]+//; s/"//g; s/[[:space:]].*$//'
+          )
+          for d in $dests; do
+            [ "$d" = '$existing' ] && continue   # resolved from PATH at run time
+            p=$(printf '%s' "$d" | sed "s#\$STATE#$STATE#; s#\$ETC#$ETC#; s#\$UNITDIR#$UNITDIR#")
+            case "$p" in /*) ;; *) continue ;; esac
+            grep -qF -- "$p" "$U" || { echo "::error file=$U::install.sh creates $p, the uninstaller never names it"; rc=1; }
+          done
+          echo "checked $(echo "$dests" | grep -c .) installed paths"
+          exit $rc
+
       - name: Every file carries an SPDX identifier
         # The project's own convention, enforced. This is what a REUSE lint
         # would check; doing it inline keeps the zero-dependency promise.

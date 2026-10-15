@@ -52,7 +52,11 @@ for z in /sys/class/thermal/thermal_zone*; do
     [ "$(cat "$z/type" 2>/dev/null)" = "$FANZONE" ] && { ZONE="$z/mode"; break; }
 done
 
-# Paths the installer can create. Used only with --force, when no manifest survives.
+# Every path install.sh records OWNED. Used only with --force, when no manifest survives,
+# so anything missing here is a file --force leaves behind for good. The user's config is
+# deliberately absent - the /etc/qcctl block below keeps or purges that - but the .dist
+# reference copies beside it are ours, and are removed with or without --purge.
+# CI asserts this list against install.sh; see .github/workflows/gate.yml.
 KNOWN="/etc/systemd/system/qcctld.service
 /etc/systemd/system/qcctl-resume.service
 /usr/sbin/qcctld
@@ -62,6 +66,10 @@ KNOWN="/etc/systemd/system/qcctld.service
 /usr/sbin/qcctl-check
 /usr/bin/qcstats
 /usr/share/polkit-1/actions/io.github.hans_kramer.qcctl.policy
+/usr/share/doc/qcctl/USAGE.md
+/usr/share/doc/qcctl
+/etc/qcctl/fan.config.dist
+/etc/qcctl/profiles.conf.dist
 /var/lib/qcctl"
 
 run() { if [ "$DRY" = 1 ]; then echo "    would: $*"; else "$@" >/dev/null 2>&1 || true; fi; }

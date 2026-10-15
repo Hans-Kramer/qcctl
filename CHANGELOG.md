@@ -72,6 +72,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`--force` left four files behind for good.** `uninstall.sh` falls back to a built-in
+  path list when no manifest survives, which is exactly what `--force` is for, and that list
+  omitted four paths the installer records `OWNED`: `/usr/share/doc/qcctl/USAGE.md`, the
+  directory holding it, and both `/etc/qcctl/*.dist` reference copies. Because `--force` is
+  the case where no manifest exists to correct the omission from, those four had no route off
+  the board at all. The `.dist` copies belong in that list rather than with the config —
+  `profiles.conf` and `fan.config` are the user's and survive without `--purge`, but the
+  reference copies beside them are ours and every upgrade refreshes them.
+
+  CI now asserts the list against `install.sh`, since two hand-maintained lists that must
+  agree is how this happened: an `OWNED` destination the uninstaller never names fails the
+  gate.
+
 - **The guard against two daemons sharing the fan never fired.** `qcctld` defaulted its
   pidfile to `/run/qcctld.pid` while the unit passed `--pidfile /run/qcctl/pid`, so a
   hand-started daemon and the unit's each created a pidfile the other could not see, and
