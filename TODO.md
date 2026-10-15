@@ -52,11 +52,6 @@ thing this project refuses to make.
 
 ## Defects — other
 
-- **`--dry-run` claims a systemd-managed daemon is "outside systemd".** Step 1 does not
-  actually stop the unit in a dry run, so the `pgrep` that follows finds the running daemon
-  and narrates it as hand-launched. Real runs are correct — the stop has happened by then.
-  **[measured]**
-
 - **`publish_status()` fails silently.** If the status file cannot be opened it simply
   returns, so a consumer sees a missing or stale file with nothing in the journal to say
   why. The default pidfile now creates `/run/qcctl` when systemd has not, so this only

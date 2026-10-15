@@ -85,13 +85,20 @@ if systemctl list-unit-files qcctld.service >/dev/null 2>&1 &&
 else
     note "   not running"
 fi
-# Anything left outside systemd (a hand-launched daemon from testing).
-if pgrep -x qcctld >/dev/null 2>&1; then
-    note "   a qcctld outside systemd is still alive - terminating"
-    run pkill -TERM -x qcctld
+# Anything left outside systemd (a hand-launched daemon from testing). The unit's own
+# pid comes from systemd rather than being assumed dead: a dry run does not really stop
+# the service, so without this it reported the unit's daemon as a stray.
+MAINPID=$(systemctl show -p MainPID --value qcctld.service 2>/dev/null)
+stray=
+for p in $(pgrep -x qcctld 2>/dev/null); do
+    [ "$p" = "${MAINPID:-0}" ] || stray="$stray $p"
+done
+if [ -n "$stray" ]; then
+    note "   a qcctld outside systemd is still alive (pid$stray) - terminating"
+    run kill -TERM $stray
     i=0; while [ "$DRY" = 0 ] && pgrep -x qcctld >/dev/null 2>&1 && [ "$i" -lt 6 ]; do
         sleep 1; i=$((i+1)); done
-    run pkill -KILL -x qcctld
+    run kill -KILL $stray
 fi
 
 # ------------------------------------------------------- 2. hand the fan back, verify

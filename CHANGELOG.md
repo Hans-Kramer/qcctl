@@ -40,6 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stock".** A refusal on that ground exits **4**. No snapshot at all is not evidence of a
   durable change, so an install that died before writing one stays removable.
 
+- **`uninstall.sh` no longer calls the unit's own daemon a stray, and kills by pid.** It
+  treated every running `qcctld` as hand-launched, which in a dry run — where the service is
+  not really stopped — meant reporting the unit's daemon as one. It now asks systemd for the
+  unit's `MainPID` and excludes it, so a real stray is still found and named. The termination
+  is `kill` on those pids rather than `pkill -x qcctld`, which would have taken the unit's
+  daemon with it.
+
 - **`uninstall.sh`'s closing verdict states "removed" and "reverted" separately,** and claims
   the second only when the read-back proved it. `--help` now lists its exit codes.
 
