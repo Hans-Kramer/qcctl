@@ -118,9 +118,11 @@ thing this project refuses to make.
   excluding it from the binary smoke test. A broken `qcctl-check` is therefore not detected
   before it is trusted to gate the install.
 
-- **Three paths nothing verifies:** suspend/resume (the board resumes from neither `freeze` nor
-  `deep`, so the hook cannot be exercised here — stated in the unit itself), the `SIGKILL`
-  fan-release backstop, and a cold-boot install (`install.sh` says so in its closing line).
+- **Two paths nothing verifies:** suspend/resume (the board resumes from neither `freeze` nor
+  `deep`, so the hook cannot be exercised here — stated in the unit itself) and the `SIGKILL`
+  fan-release backstop. A cold boot is now covered: on a power cycle the daemon snapshots
+  `policy2` as the vendor's `ondemand` and applies `schedutil` over it, so the
+  `After=sysfsutils.service` ordering holds. **[measured]**
 
 - **No `CapabilityBoundingSet=` on the unit.** `ProtectKernelTunables=` and
   `ProtectSystem=strict` would break a daemon whose job is writing `/sys`, but the capability

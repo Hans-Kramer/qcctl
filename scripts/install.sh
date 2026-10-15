@@ -361,7 +361,8 @@ fi
 echo ""
 if [ "$bad" = 0 ]; then
     echo "  INSTALLED. Removal: sudo qcctl-uninstall   (add --purge to drop config)"
-    echo "  Not yet proven across a reboot - that needs a power cycle."
+    echo "  Enabled at boot. Coming up across a power cycle is verified on this"
+    echo "  hardware, though THIS install has not been through one yet."
 else
     echo "  INSTALL INCOMPLETE - see above. scripts/uninstall.sh will undo it."
     exit 1

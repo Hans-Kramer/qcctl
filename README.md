@@ -16,10 +16,11 @@
 > behavioural test suite yet**. Every figure in these docs was measured on
 > hardware by hand, which is not the same as being re-checked on every change.
 >
-> Install, removal and reinstall have been exercised on hardware and removal
-> returns the board to stock. **Not verified: a cold boot, and suspend/resume —
-> this board resumes from neither sleep state.** Interfaces and config syntax
-> may change without notice before `0.1.0`. Known gaps are in
+> Install, removal, reinstall and a cold boot have been exercised on hardware;
+> removal returns the board to stock, and after a power cycle `policy2` comes up
+> `schedutil` rather than the vendor's `ondemand`. **Not verified:
+> suspend/resume — this board resumes from neither sleep state.** Interfaces and
+> config syntax may change without notice before `0.1.0`. Known gaps are in
 > [`TODO.md`](TODO.md).
 >
 > Fit for a board you are willing to experiment with. Not for one you depend on.

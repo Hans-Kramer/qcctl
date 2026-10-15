@@ -43,6 +43,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`uninstall.sh`'s closing verdict states "removed" and "reverted" separately,** and claims
   the second only when the read-back proved it. `--help` now lists its exit codes.
 
+### Changed
+
+- **A cold boot is now verified, and the docs no longer contradict each other on it.** The
+  README's status line and `docs/USAGE.md` both claimed `policy2` was verified to come up
+  `schedutil` across a power cycle, while the README's own caution block and the installer's
+  closing line said a cold boot was unverified. It is now measured: on a power cycle the
+  daemon snapshots `policy2` as the vendor's `ondemand` and applies `schedutil` over it, so
+  the unit's `After=sysfsutils.service` ordering holds. Suspend/resume remains unverified and
+  is still stated as such — this board resumes from neither sleep state.
+
 ### Removed
 
 - **`CONF` and `FANCONF` from the `Makefile`.** They sat beside `STAGE` and `QCSTATS` in the
