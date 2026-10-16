@@ -62,31 +62,50 @@ jobs:
 
       - name: Every OWNED path is known to the uninstaller
         # install.sh records what it creates in a manifest, but --force exists for when no
-        # manifest survives, and then uninstall.sh falls back to a hand-written list. A path
+        # manifest survives, and uninstall.sh then falls back to a hand-written list. A path
         # the installer creates and that list omits is one --force leaves behind for good.
-        # Matches anywhere in uninstall.sh, so a path named only in a comment would pass -
-        # loose on purpose, since the alternative is parsing a shell array.
+        #
+        # Three things this has to get right, each of which the first version got wrong.
+        # Continuations are joined, or a put whose destination is on the next line yields an
+        # empty entry that word splitting drops. The comparison is a whole-line match against
+        # the KNOWN block alone, not a substring search of the file, which passed for every
+        # path that is a prefix of a sibling or is named in a comment. And both sets are
+        # size-checked, because a comparison over an empty set passes having checked nothing.
         run: |
           I=scripts/install.sh; U=scripts/uninstall.sh
           STATE=$(sed -n 's/^STATE=//p' "$I")
           ETC=$(sed -n 's/^ETC=//p' "$I")
           UNITDIR=$(sed -n 's/^UNITDIR=//p' "$I")
-          rc=0
-          dests=$(
-            grep -E '^[[:space:]]*(\[[^]]*\][[:space:]]*&&[[:space:]]*)?put ' "$I" |
+          joined=$(sed -e :a -e '/\\$/{N;s/\\\n[[:space:]]*/ /;ba' -e '}' "$I")
+          raw=$(
+            printf '%s\n' "$joined" | grep -E '(^|&&[[:space:]]*)[[:space:]]*put ' |
               grep -v 'CONFIG[[:space:]]*$' |
-              sed -E 's/.*put[[:space:]]+[0-7]+[[:space:]]+("[^"]*"|[^[:space:]]+)[[:space:]]+//' |
-              sed -E 's/[[:space:]].*$//; s/"//g; s/\\$//'
-            grep -E 'record OWNED' "$I" |
+              sed -E 's/.*put[[:space:]]+[0-7]+[[:space:]]+("[^"]*"|[^[:space:]]+)[[:space:]]+//; s/[[:space:]].*$//; s/"//g'
+            printf '%s\n' "$joined" | grep -E 'record OWNED' |
               sed -E 's/.*record OWNED[[:space:]]+//; s/"//g; s/[[:space:]].*$//'
           )
-          for d in $dests; do
-            [ "$d" = '$existing' ] && continue   # resolved from PATH at run time
-            p=$(printf '%s' "$d" | sed "s#\$STATE#$STATE#; s#\$ETC#$ETC#; s#\$UNITDIR#$UNITDIR#")
-            case "$p" in /*) ;; *) continue ;; esac
-            grep -qF -- "$p" "$U" || { echo "::error file=$U::install.sh creates $p, the uninstaller never names it"; rc=1; }
+          owned=
+          for d in $raw; do
+            case "$d" in
+              '$STATE'*)   d=$STATE${d#\$STATE} ;;
+              '$ETC'*)     d=$ETC${d#\$ETC} ;;
+              '$UNITDIR'*) d=$UNITDIR${d#\$UNITDIR} ;;
+            esac
+            case "$d" in /*) owned="$owned$d
+          " ;; esac
           done
-          echo "checked $(echo "$dests" | grep -c .) installed paths"
+          owned=$(printf '%s' "$owned" | sort -u)
+          known=$(sed -n '/^KNOWN="/,/"$/p' "$U" | sed 's/^KNOWN="//; s/"$//' | grep '^/' | sort -u)
+          no=$(printf '%s\n' "$owned" | grep -c .); nk=$(printf '%s\n' "$known" | grep -c .)
+          [ "$no" -ge 10 ] || { echo "::error file=$I::extracted only $no OWNED paths; the extractor is broken, not the list"; exit 1; }
+          [ "$nk" -ge 10 ] || { echo "::error file=$U::parsed only $nk entries out of the KNOWN block"; exit 1; }
+          printf '%s\n' "$owned" | grep -qx /usr/sbin/qcctld || { echo "::error file=$I::extraction lost a path it must always find"; exit 1; }
+          rc=0
+          for p in $owned; do
+            printf '%s\n' "$known" | grep -qxF -- "$p" ||
+              { echo "::error file=$U::install.sh creates $p, the KNOWN fallback list omits it"; rc=1; }
+          done
+          echo "compared $no OWNED paths against $nk KNOWN entries"
           exit $rc
 
       - name: Every file carries an SPDX identifier

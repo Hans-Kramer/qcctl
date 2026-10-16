@@ -72,6 +72,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The gate asserting the `--force` path checked less than it reported.** It matched each
+  installed path as a substring anywhere in `uninstall.sh`, so any path that is a prefix of
+  a sibling — `/usr/share/doc/qcctl` inside `…/USAGE.md`, `/usr/sbin/qcctl` inside
+  `qcctl-uninstall` — or that is merely named in a comment, passed whether the fallback list
+  held it or not. It also skipped a `put` whose destination sits on a continuation line,
+  leaving the polkit policy unchecked, and it passed when the extraction matched nothing, so
+  a change to the installer's idiom would have turned it green rather than red.
+
+  It now joins continuations before extracting, matches whole lines against the `KNOWN`
+  block alone, and refuses to report success unless both sets are populated and a path it
+  must always find is present. Removing each of the fourteen entries in turn is caught;
+  previously six of thirteen were.
+
 - **`--force` left four files behind for good.** `uninstall.sh` falls back to a built-in
   path list when no manifest survives, which is exactly what `--force` is for, and that list
   omitted four paths the installer records `OWNED`: `/usr/share/doc/qcctl/USAGE.md`, the
