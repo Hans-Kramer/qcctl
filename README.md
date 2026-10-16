@@ -114,10 +114,11 @@ attached.
 
 | | | |
 |---|---|---|
-| `maxperf` | all three policies pinned at fmax, GPU pinned | 12 settings |
+| `maxperf` | all three policies pinned at fmax, GPU pinned, fan on early | 14 settings |
 | `balanced` *(default)* | `schedutil` everywhere — **including `policy2`** | 12 settings |
-| `quiet` | caps frequencies, raises the fan trip to 45 °C to stop idle cycling | 9 settings |
+| `quiet` | caps frequencies, runs the `quiet` curve, fan trip raised to 45 °C | 11 settings |
 | `workstation` | hands the fan to the daemon so a real curve can run | 9 settings |
+| `held40` | `balanced` clocks, fan holds a temperature instead of following one | 14 settings |
 | `lowpower` | A55 cluster emphasis, `uclamp` capped, two cores offline | 14 settings |
 
 Two rules in `profiles.conf`, both deliberate:

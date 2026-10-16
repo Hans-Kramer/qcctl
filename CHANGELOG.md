@@ -95,6 +95,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<phandle, min, max>`), because sysfs exposes no thermal instance bounds. Where it cannot
   be read the fan is still left at maximum, which is the safe direction.
 
+- **The three unreferenced `fan.config` blocks are wired up, and the `quiet` name collision
+  is resolved.** Curves `quiet` and `sustained` and target `held40` were named by no profile,
+  so nothing could select them and nothing exercised them — the `TARGET` engine had no
+  shipped configuration at all. The collision was the worst of it: the `quiet` *profile* ran
+  `FAN MODE kernel`, which left the `quiet` *curve* beside it unreachable while the shared
+  name invited exactly the wrong inference.
+
+  - `quiet` runs the curve of the same name. Its raised 45 °C trip is kept and now has a
+    job: the curve's `FAILSAFE kernel` hands the zone back, and 45 °C is where the kernel
+    then starts the fan.
+  - `maxperf` runs `sustained`, whose `FAILSAFE full` is the right answer for a board pinned
+    at fmax — losing the daemon there must not hand a hot board back to a single 38 °C trip.
+  - `held40` is a new profile, ID 5: a `TARGET` block no profile names cannot be selected at
+    all. `balanced`'s clocks, with the fan holding a temperature rather than following one.
+
+  Their points are trimmed to the same measured envelope as `desktop`, and `held40`'s
+  deadband goes from 1 °C to 2 °C — no fan state holds a loaded board below 40.9 °C, so a
+  1 °C band had the controller stepping to maximum for the last 0.2 °C: measured, state 2 to
+  7 in 90 seconds with the temperature flat at 41.2 °C. A 2 °C band is satisfied anywhere
+  between 38 and 42 °C, which is where a loaded board sits.
+
+  Verified on the board: all six profiles validate and apply, the daemon takes the zone for
+  `sustained`, `quiet` and `held40` in turn, the `quiet` curve holds the fan off through the
+  whole unaided climb and engages at 44.6 °C exactly as its first point asks, and `held40`
+  steps one state per interval and stops once the zone is inside the deadband.
+
 - **The `desktop` fan curve is trimmed to the temperatures this board actually reaches.** Its
   upper points sat at 50, 65 and 75 °C on a zone that idles at 36 °C and reaches 47 °C under
   full load with the fan switched off, so three of its five points could not be entered — and

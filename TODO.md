@@ -48,6 +48,18 @@ thing this project refuses to make.
   `/proc/device-tree/thermal-zones/cpuss-0-0-thermal/cooling-maps/map-active`:
   `cooling-device = <phandle, 4, THERMAL_NO_LIMIT>`. **[measured]**
 
+- **A strategy release leaves the fan where the strategy left it.** `fan_release()` releases
+  through `FANOWN_HANDBACK`, which writes `max(the state we drove it to, the state found when
+  the zone was taken)` and never lowers — so switching off a curve or target profile hands
+  the kernel an enabled zone with the fan still high, and the kernel lowers it only on a trip
+  crossing an idle board never makes. Measured twice on 2026-10-16: switching from `held40`
+  to `balanced` at 34 °C left `cur_state` **8** and it stayed there, and an earlier switch
+  left **7**. `--cool-max` and `--fan-baseline capture` already hand back the state the
+  kernel itself would hold — `fanown_release_mode()`, 0 below the zone's active trip and the
+  cooling map's floor at or above it — and the daemon's own release is the path that still
+  does not. The comment above the code states the old reasoning, *do not lower a hot board*,
+  which `fanown_release_mode()` answers properly. **[measured]**
+
 - **The cooling-map floor is read from only the first `cooling-device` entry of each map.**
   One map with one cooling device is all this board has, so matching entries by phandle to
   the cdev's own node was not needed. A zone binding several devices would need that.
@@ -55,6 +67,18 @@ thing this project refuses to make.
 ---
 
 ## Defects — other
+
+- **A `systemctl stop` hung for 90 seconds and ended in `SIGKILL`.** Observed once, on
+  2026-10-16, with the SIGTERM landing in the same second as a live strategy switch
+  (`curve 'quiet'` → `target 'held40'`): the daemon logged the switch and the new take, then
+  nothing, and systemd killed it at the `TimeoutStopSec` boundary. `ExecStopPost` did its job
+  — `qcctl-fan-release` returned the zone a second later — but a `SIGKILL`ed daemon runs no
+  release of its own. Not reproduced in 16 targeted attempts across the switch window, so the
+  trigger is narrower than "switch strategies, then stop". The only unbounded wait on that
+  path is `stats_close()`'s `waitpid(pid, &status, 0)`, and `signal()` installs handlers with
+  `SA_RESTART`, so a SIGTERM arriving there sets `stop_flag` and the wait simply resumes.
+  Bounding it — poll with `WNOHANG`, then `SIGKILL` the group — makes the worst case a
+  fraction of a second whether or not that is the cause. **[measured, once]**
 
 - **`publish_status()` fails silently.** If the status file cannot be opened it simply
   returns, so a consumer sees a missing or stale file with nothing in the journal to say
@@ -84,11 +108,6 @@ thing this project refuses to make.
 ---
 
 ## Config and text
-
-- **Unreferenced `fan.config` blocks.** Curves `quiet` and `sustained` and target `held40` are
-  named by no profile. The `quiet` *profile* uses `FAN MODE kernel`, so the similarly-named
-  `quiet` *curve* is unreachable — a name collision across two files that invites exactly the
-  wrong inference.
 
 ---
 

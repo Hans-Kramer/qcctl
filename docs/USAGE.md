@@ -46,10 +46,11 @@ apply discover it.
 
 | profile | what it does |
 |---|---|
-| `maxperf` | all three policies pinned at their maximum, GPU pinned |
+| `maxperf` | all three policies pinned at their maximum, GPU pinned, fan on early |
 | `balanced` | `schedutil` everywhere, including `policy2`. The default |
-| `quiet` | caps frequencies and raises the fan trip to 45 °C, which stops the idle fan cycling |
+| `quiet` | caps frequencies, runs the `quiet` curve, and raises the fan trip to 45 °C |
 | `workstation` | hands the fan to the daemon so a real curve runs |
+| `held40` | `balanced` clocks, but the fan holds a temperature instead of following one |
 | `lowpower` | A55-cluster emphasis, `uclamp` capped, two cores offline |
 
 Switching is **idempotent**: anything the previous profile set that the new one does not
@@ -268,11 +269,12 @@ two PMIC zones. Nothing is in danger at 85 °C.
 
 ### What to expect
 
-With a 40 °C target under a sustained CPU and memory load, the controller reaches state 6
-and then **stops adjusting** — measured at 8 state changes across a 735-second run, holding
-a mean of 40.8 °C. If you obstruct the intake it goes to maximum and stays there, but
-settles about 5 °C above target, because the fan runs out of authority. The daemon says so
-rather than failing quietly.
+With `held40`, all eight cores loaded and a warm start at 45 °C, the controller steps up
+one state per `STEP_INTERVAL` while the zone is above target plus `DEADBAND` and **stops
+adjusting** once the reading is inside the band — measured at 8 changes in 100 seconds,
+settling the zone at 39–40 °C. If you obstruct the intake it goes to maximum and stays
+there, but settles about 5 °C above target, because the fan runs out of authority. The
+daemon says so rather than failing quietly.
 
 ---
 
