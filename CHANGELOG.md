@@ -47,6 +47,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`qcctld` detaches by default, and `--foreground` now means something.** The flag was
+  accepted and ignored — there was no fork path at all, so the only mode was the foreground
+  one the unit asks for. `--foreground` is still what the unit passes, because `Type=simple`
+  tracks the process it starts.
+
+  The fork happens after everything that reports to stderr and before the pidfile is
+  created, so startup errors reach the caller directly and the pid recorded is the resident
+  process. The parent waits for the child to apply the profile and resolve its fan strategy,
+  then exits with the *child's* status: `qcctld` still answers **4** for "another qcctld is
+  running" rather than losing that verdict to a detached process's closed stderr. Measured
+  on a Ventuno Q: exit 4 both detached and in the foreground, with the running unit's
+  pidfile untouched, and a pidfile that fails for any other reason still does not claim a
+  second daemon.
+
+  Once detached there is no terminal, so the log goes to syslog under the `qcctld`
+  identifier — the same journal `systemctl` reads. Startup messages still reach the caller's
+  stdout, before the prompt comes back. `--oneshot` implies `--foreground`: its exit status
+  is its answer, so detaching would return a prompt and no verdict.
+
 - **`--cool-max` and `--fan-baseline capture` now hand the fan back in the state the kernel
   itself would hold:** 0 below the zone's active trip, and the cooling map's lower limit at
   or above it. Previously the fan was left at `max_state` whenever the board was at or above
@@ -73,8 +92,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`uninstall.sh`'s closing verdict states "removed" and "reverted" separately,** and claims
   the second only when the read-back proved it. `--help` now lists its exit codes.
-
-### Changed
 
 - **A cold boot is now verified, and the docs no longer contradict each other on it.** The
   README's status line and `docs/USAGE.md` both claimed `policy2` was verified to come up

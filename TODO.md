@@ -81,13 +81,6 @@ thing this project refuses to make.
   refused before any write.**]** What remains is supersession by another writer, a driver
   that accepts and ignores, and hardware the validator does not model.
 
-- **`qcctld --foreground` is accepted and ignored.** There is no fork path at all, so the flag
-  promises a choice that does not exist. Either implement it or drop it. Confirmed 2026-10-14
-  that the shipped unit passes it: the running process is
-  `/usr/sbin/qcctld --foreground --pidfile /run/qcctl/pid`, so this is not a hypothetical
-  flag nobody uses — it is in the unit, doing nothing. The same `ps` line confirms the
-  pidfile mismatch above. **[measured]**
-
 ---
 
 ## Config and text

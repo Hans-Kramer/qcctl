@@ -32,6 +32,7 @@
 #include <time.h>
 #include <stdarg.h>
 #include <sys/stat.h>
+#include <syslog.h>
 
 #define DEF_CONF    "/etc/qcctl/profiles.conf"
 #define DEF_FAN     "/etc/qcctl/fan.config"
@@ -349,14 +350,22 @@ static void publish_degraded(const char *path, const char *profile, const char *
     publish_status(path, &si);
 }
 
+/* Set once, when the daemon detaches: a background process has no terminal to print to. */
+static int log_to_syslog = 0;
+
 static void logmsg(const char *fmt, ...)
 {
     va_list ap;
     struct timespec ts;
 
+    va_start(ap, fmt);
+    if (log_to_syslog) {
+        vsyslog(LOG_INFO, fmt, ap);
+        va_end(ap);
+        return;
+    }
     clock_gettime(CLOCK_REALTIME, &ts);
     printf("[%ld.%03ld] ", (long)ts.tv_sec, ts.tv_nsec / 1000000);
-    va_start(ap, fmt);
     vprintf(fmt, ap);
     va_end(ap);
     printf("\n");
@@ -568,6 +577,68 @@ static int pidfile_create(const char *path)
 }
 
 
+/* The default. Returns the readiness pipe's write end, which the child reports a startup
+ * verdict on - so the caller's exit status is the daemon's own and not the fork's. */
+static int daemon_detach(void)
+{
+    int pfd[2];
+    pid_t pid;
+
+    if (pipe2(pfd, O_CLOEXEC) < 0) {
+        fprintf(stderr, "pipe: %s\n", strerror(errno));
+        exit(1);
+    }
+    pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "fork: %s\n", strerror(errno));
+        exit(1);
+    }
+    if (pid > 0) {
+        unsigned char code = 1;
+        ssize_t n;
+
+        close(pfd[1]);
+        /* EOF means the child exited before reporting, which is a failure to start. */
+        do { n = read(pfd[0], &code, 1); } while (n < 0 && errno == EINTR);
+        _exit(n == 1 ? (int)code : 1);
+    }
+    close(pfd[0]);
+    setsid();
+    return pfd[1];
+}
+
+/* The byte is the exit code the parent is to return. No-op in the foreground. */
+static void startup_verdict(int *fd, int code)
+{
+    unsigned char b = (unsigned char)code;
+    ssize_t n;
+
+    if (*fd < 0)
+        return;
+    n = write(*fd, &b, 1);
+    (void)n;
+    close(*fd);
+    *fd = -1;
+}
+
+/* From here there is no terminal: whoever started us has their prompt back. */
+static void log_detach(void)
+{
+    int fd;
+
+    openlog("qcctld", LOG_PID, LOG_DAEMON);
+    log_to_syslog = 1;
+    fd = open("/dev/null", O_RDWR);
+    if (fd < 0)
+        return;
+    dup2(fd, STDIN_FILENO);
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+    if (fd > STDERR_FILENO)
+        close(fd);
+}
+
+
 /* ======================================================================= */
 /*                               MAIN                                      */
 /* ======================================================================= */
@@ -596,7 +667,9 @@ static void usage(void)
 "                              feed a canned NDJSON stream instead of qcstats\n"
 "      --no-apply              run the fan curve only; do not apply the profile\n"
 "      --oneshot               apply, then exit without running a curve\n"
-"      --foreground            log to stdout and do not fork (the systemd way)\n"
+"      --foreground            stay in the foreground and log to stdout; what the\n"
+"                              systemd unit passes. The default is to detach once the\n"
+"                              pidfile is held and log to syslog. --oneshot implies it.\n"
 "  -V, --version               print the version and exit\n"
 "  -h, --help\n", DEF_CONF, DEF_FAN, DEF_STATE, DEF_PIDFILE, DRIFT_CHECK_MS,
    DEF_SELECTED);
@@ -627,7 +700,8 @@ int main(int argc, char **argv)
     const char *ctlsock = CONTROL_SOCK;
     const char *fanbasef = DEF_FANBASE;
     int drift_ms = DRIFT_CHECK_MS;
-    int no_apply = 0, oneshot = 0;
+    int no_apply = 0, oneshot = 0, foreground = 0;
+    int ready_fd = -1;
     struct surface s;
     struct pconfig pc;
     struct fanconfig fc;
@@ -652,7 +726,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "-V") || !strcmp(a, "--version")) { version(); return 0; }
         else if (!strcmp(a, "--no-apply"))                    no_apply = 1;
         else if (!strcmp(a, "--oneshot"))                     oneshot = 1;
-        else if (!strcmp(a, "--foreground"))                  ;   /* only mode for now */
+        else if (!strcmp(a, "--foreground"))                  foreground = 1;
         else if (!strcmp(a, "-c") || !strcmp(a, "--config")) { if (++i>=argc) goto badarg; conf = argv[i]; }
         else if (!strcmp(a, "--fan-config"))                 { if (++i>=argc) goto badarg; fanconf = argv[i]; }
         else if (!strcmp(a, "--state"))                      { if (++i>=argc) goto badarg; statef = argv[i]; }
@@ -671,6 +745,11 @@ badarg:
         fprintf(stderr, "%s needs a value\n", a);
         return 2;
     }
+
+    /* --oneshot's exit status IS its answer, so detaching would hand back a prompt and
+     * no verdict. */
+    if (oneshot)
+        foreground = 1;
 
     signal(SIGINT,  on_signal);
     signal(SIGTERM, on_signal);
@@ -785,6 +864,11 @@ badarg:
         return 3;
     }
 
+    /* After everything that reports to stderr and before the pidfile, so startup errors
+     * reach the caller directly and the pid recorded is the resident one. */
+    if (!foreground)
+        ready_fd = daemon_detach();
+
     ensure_rundir(pidf);
     if (pidfile_create(pidf) < 0) {
         int e = errno;
@@ -794,6 +878,7 @@ badarg:
         if (e == EEXIST)
             fprintf(stderr, "  another qcctld is running; "
                             "two writers must not share the fan\n");
+        startup_verdict(&ready_fd, 4);
         return 4;
     }
     made_pid = 1;
@@ -896,6 +981,12 @@ badarg:
         rc = 0;
         goto out;
     }
+    /* Ready: the profile is applied and the fan strategy resolved. Anything that failed
+     * before here has already exited, and the parent returns that status. */
+    startup_verdict(&ready_fd, 0);
+    if (!foreground)
+        log_detach();
+
     /* ========================================================================= */
     /*                              RESIDENT LOOP                                */
     /* ========================================================================= */
