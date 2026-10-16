@@ -522,19 +522,38 @@ static void ensure_rundir(const char *path)
     if (!slash || slash == dir)
         return;
     *slash = '\0';
-    if (mkdir(dir, 0755) == 0)
+    if (mkdir(dir, 0755) == 0) {
+        /* mkdir's mode is masked by umask, and 0755 here is load-bearing: the 0666 control
+         * socket inside is only reachable while this is world-traversable. A hand-started
+         * daemon inherits the operator's umask, so state the mode rather than request it -
+         * which is what install.sh and RuntimeDirectoryMode= both do. */
+        if (chmod(dir, 0755) != 0)
+            logmsg("warning: created %s but could not set mode 0755 (%s) - an "
+                   "unprivileged --cool-max may not reach the control socket",
+                   dir, strerror(errno));
         logmsg("created %s - no RuntimeDirectory, so this was started outside systemd", dir);
+    }
 }
 
 static int pidfile_create(const char *path)
 {
     char buf[32];
     int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    int firsterr = errno;
 
-    if (fd < 0 && errno == EEXIST && pidfile_is_stale(path)) {
-        logmsg("removing stale pidfile %s", path);
-        if (unlink(path) == 0)
-            fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    /* pidfile_is_stale() opens and reads two files, and a library call may set errno even
+     * when it succeeds. The caller distinguishes EEXIST - another daemon - from every other
+     * cause, so on the one path where nothing after the open sets errno meaningfully,
+     * restore what the open failed with. On the others, unlink or the retry has set it and
+     * that is the more useful value. */
+    if (fd < 0 && firsterr == EEXIST) {
+        if (pidfile_is_stale(path)) {
+            logmsg("removing stale pidfile %s", path);
+            if (unlink(path) == 0)
+                fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+        } else {
+            errno = firsterr;
+        }
     }
     if (fd < 0)
         return -1;

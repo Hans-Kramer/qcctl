@@ -91,6 +91,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   must always find is present. Removing each of the fourteen entries in turn is caught;
   previously six of thirteen were.
 
+- **`qcctld` requested a runtime-directory mode instead of setting it.** `mkdir`'s mode is
+  masked by umask, so a daemon started by hand under `umask 027` or stricter created
+  `/run/qcctl` at 0750 or 0700 — without the world-traversable bit the 0666 control socket
+  inside depends on, silently disabling unprivileged `--cool-max`. That is the failure the
+  comment above the line warns against. The mode is now set explicitly, as `install.sh` and
+  `RuntimeDirectoryMode=` both do. Verified under `umask 077`: the directory comes out 0755.
+
+- **A pidfile diagnostic depended on `errno` surviving two file reads.** `pidfile_is_stale()`
+  opens and reads two files between the failed `open` and the caller's inspection of
+  `errno`, and a library call is permitted to set `errno` even when it succeeds — so the
+  "another qcctld is running" message rested on an unguaranteed property, on exactly the
+  path it exists for. The value is now restored where nothing after the `open` sets it
+  meaningfully; where `unlink` or the retry has set it, that remains the more useful cause.
+
 - **A release reported a fan state it had failed to set.** When the write was refused,
   stderr said the fan was left where it was and stdout then asserted it had been set —
   including "nothing is left for it to walk back", which is precisely the claim the refusal
