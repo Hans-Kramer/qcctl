@@ -140,6 +140,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the trimmed curve installed: the daemon takes the zone, holds state 4 through a 140-second
   full-load run at 41.2 °C, and the 43 °C step is never entered by load alone.
 
+- **An uninstall keeps the captured fan baseline, and `--purge` takes it.**
+  `/var/lib/qcctl/fan-baseline` sat inside an `OWNED` directory, so a plain uninstall deleted
+  it while `--purge` was still being offered as the destructive option. It is not ours: it
+  measures *this* board in *this* enclosure, it costs a two-minute fan-driving capture to
+  replace, and `airflow` reports `null` until it is back — the argument that makes
+  `profiles.conf` `CONFIG` rather than `OWNED`. It is now stashed across the removal and put
+  back, the way the boot-state snapshot and the kept-config record already are, and `--purge`
+  removes it alongside the config and says so.
+
+  The step-7 residue check now judges each file left in `/var/lib/qcctl` on its own instead
+  of testing one reason at a time: it used to name the first thing that legitimately survived
+  and stop looking, so a kept snapshot would have hidden anything else left beside it.
+
+  Measured: capture, uninstall, and the file is byte-identical afterwards, with the
+  reinstalled daemon judging airflow against it again; `--purge` removes it; and both dry
+  runs say which of the two is about to happen.
+
 - **`uninstall.sh --force` also means "remove the files even though the board is not back to
   stock".** A refusal on that ground exits **4**. No snapshot at all is not evidence of a
   durable change, so an install that died before writing one stays removable.

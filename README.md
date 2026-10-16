@@ -75,7 +75,7 @@ Requires the cross-built binaries, the configs and the units in one directory:
 
 ```sh
 sudo ./install.sh              # or --upgrade over an existing install
-sudo qcctl-uninstall     # add --purge to drop /etc/qcctl too
+sudo qcctl-uninstall     # add --purge to drop /etc/qcctl and the fan baseline too
 ```
 
 The installer records exactly what it created in `/var/lib/qcctl/install.manifest`,

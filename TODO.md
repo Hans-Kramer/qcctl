@@ -12,13 +12,6 @@ anything else is read from the source and not yet confirmed on hardware.
 Removal matters more than install here, because a durable change you cannot reverse is the
 thing this project refuses to make.
 
-- **An uninstall destroys the fan baseline.** `/var/lib/qcctl/fan-baseline` sits inside an
-  `OWNED` directory, so a plain uninstall removes it while `--purge` is still being offered
-  as the destructive option. It is measured data that costs a ~2-minute fan-driving capture
-  to replace, and `airflow` reports `null` until it is back — the same "user's work, not
-  ours" argument that makes `profiles.conf` `CONFIG`. Observed during the read-back test on
-  2026-10-13: a verified-clean uninstall and reinstall left the baseline gone. **[measured]**
-
 - **`/tmp` leak, and an upgrade hazard.** The previous manifest is copied to a `mktemp` file
   that is never removed, so each `--upgrade` leaves one behind — and that copy is the only
   record of the prior install's ownership, since step 2 truncates the real manifest. An

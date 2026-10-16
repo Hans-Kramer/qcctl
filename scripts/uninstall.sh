@@ -17,7 +17,8 @@
 #
 # Usage: uninstall.sh [--dry-run] [--purge] [--force]
 #   --dry-run  print what would happen, change nothing
-#   --purge    also remove /etc/qcctl (user-edited config is kept by default)
+#   --purge    also remove /etc/qcctl and the captured fan baseline. Both are kept by
+#              default: one is the user's config, the other is the user's measurements
 #   --force    proceed past a refusal: use the built-in path list when no manifest
 #              exists, and remove the files even when the board is not back to stock
 #
@@ -34,13 +35,14 @@ for a in "$@"; do
         --purge)   PURGE=1 ;;
         --force)   FORCE=1 ;;
         # --help prints the header block above; this range tracks it.
-        -h|--help) sed -n '5,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '5,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "uninstall.sh: unknown argument '$a'" >&2; exit 2 ;;
     esac
 done
 
 MANIFEST=/var/lib/qcctl/install.manifest
 STATEF=/var/lib/qcctl/boot-state   # what --reset restores from; step 5 removes it
+FANBASE=/var/lib/qcctl/fan-baseline  # measured on this board; kept unless --purge
 VENDOR=/etc/sysfs.d/50-dragonwing-defaults.conf
 FANZONE=cpuss-0-0-thermal
 
@@ -251,6 +253,17 @@ SNAPSTATE=
 if [ "$KEEP_SNAPSHOT" = 1 ] && [ "$DRY" = 0 ] && [ -f "$STATEF" ]; then
     SNAPSTATE=$(mktemp) && cat "$STATEF" > "$SNAPSTATE"
 fi
+# The fan baseline is measured on THIS board in THIS enclosure and costs a fan-driving
+# capture to replace, so it outlives a plain uninstall the way the user's config does.
+BASESTATE=
+if [ -f "$FANBASE" ]; then
+    if [ "$PURGE" = 1 ]; then
+        note "   purging $FANBASE - a reinstall will need a fresh capture"
+    else
+        note "   keeping $FANBASE (--purge removes it)"
+        [ "$DRY" = 0 ] && { BASESTATE=$(mktemp) && cat "$FANBASE" > "$BASESTATE"; }
+    fi
+fi
 # Recorded BEFORE the manifest is deleted: it lives under an OWNED path, so testing for
 # it afterwards would fire the fallback below and purge paths it said to leave alone.
 USED_MANIFEST=0
@@ -326,6 +339,16 @@ if [ -n "$SNAPSTATE" ]; then
     fi
     rm -f "$SNAPSTATE"
 fi
+if [ -n "$BASESTATE" ]; then
+    mkdir -p "$(dirname "$FANBASE")" 2>/dev/null
+    if cat "$BASESTATE" > "$FANBASE" 2>/dev/null; then
+        chmod 0644 "$FANBASE"
+        note "   kept $FANBASE - an uninstall cannot re-measure it"
+    else
+        warn "could not keep $FANBASE; a reinstall will need a fresh capture"
+    fi
+    rm -f "$BASESTATE"
+fi
 
 # ----------------------------------------------------------------- 6. tell systemd
 note "6. reloading systemd"
@@ -341,15 +364,38 @@ for p in /usr/sbin/qcctld /usr/sbin/qcctl /etc/systemd/system/qcctld.service \
          /etc/systemd/system/qcctl-resume.service /run/qcctl; do
     if [ -e "$p" ] || [ -L "$p" ]; then warn "STILL PRESENT: $p"; left=$((left+1)); fi
 done
-# /var/lib/qcctl legitimately survives when it holds the kept-config record.
+# /var/lib/qcctl survives when it holds something this run is not entitled to remove. Each
+# file is judged on its own: a chain of reasons would report the first and miss the rest.
 if [ -e /var/lib/qcctl ]; then
-    if [ "$KEEP_SNAPSHOT" = 1 ] && [ -f "$STATEF" ]; then
-        note "   /var/lib/qcctl kept, holding the boot-state snapshot to revert by hand"
-    elif [ -f "$MANIFEST" ] && ! grep -qv '^CONFIG' "$MANIFEST" 2>/dev/null; then
-        note "   /var/lib/qcctl kept, holding only the config record"
-    else
-        warn "STILL PRESENT: /var/lib/qcctl (and it is not just a config record)"
+    # Own names: `kept` and `stray` are both live elsewhere in this script, and the
+    # closing verdict reads `kept`.
+    vl_kept= ; vl_stray=
+    for vl_f in /var/lib/qcctl/* /var/lib/qcctl/.*; do
+        case "$vl_f" in
+            /var/lib/qcctl/. | /var/lib/qcctl/..) continue ;;
+            '/var/lib/qcctl/*' | '/var/lib/qcctl/.*') continue ;;
+        esac
+        [ -e "$vl_f" ] || continue
+        case "$vl_f" in
+            "$STATEF")
+                if [ "$KEEP_SNAPSHOT" = 1 ]; then vl_kept="$vl_kept the boot-state snapshot,"
+                else vl_stray="$vl_stray $vl_f"; fi ;;
+            "$FANBASE")
+                if [ "$PURGE" = 0 ]; then vl_kept="$vl_kept the fan baseline,"
+                else vl_stray="$vl_stray $vl_f"; fi ;;
+            "$MANIFEST")
+                if grep -qv '^CONFIG' "$MANIFEST" 2>/dev/null; then vl_stray="$vl_stray $vl_f"
+                else vl_kept="$vl_kept the config record,"; fi ;;
+            *) vl_stray="$vl_stray $vl_f" ;;
+        esac
+    done
+    if [ -n "$vl_stray" ]; then
+        warn "STILL PRESENT in /var/lib/qcctl:$vl_stray"
         left=$((left+1))
+    elif [ -n "$vl_kept" ]; then
+        note "   /var/lib/qcctl kept, holding${vl_kept%,}"
+    else
+        note "   /var/lib/qcctl kept but empty"
     fi
 fi
 pgrep -x qcctld >/dev/null 2>&1 && { warn "STILL RUNNING: qcctld"; left=$((left+1)); }
