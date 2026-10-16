@@ -95,6 +95,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<phandle, min, max>`), because sysfs exposes no thermal instance bounds. Where it cannot
   be read the fan is still left at maximum, which is the safe direction.
 
+- **The `desktop` fan curve is trimmed to the temperatures this board actually reaches.** Its
+  upper points sat at 50, 65 and 75 °C on a zone that idles at 36 °C and reaches 47 °C under
+  full load with the fan switched off, so three of its five points could not be entered — and
+  a curve whose top half is unreachable is a curve that silently stops at state 4. They are
+  now 43, 45 and 47 °C.
+
+  The envelope is measured, and recorded in `fan.config` itself because it is what anyone
+  editing a curve needs: with all eight cores loaded this zone holds **41 °C at fan state 4**
+  and **41 °C at state 10** — past state 4 the fan buys nothing measurable on an open board.
+  With the fan off it reaches 47.2 °C after two minutes and is still creeping; with the intake
+  obstructed it settles about 5 °C above whatever it holds clear.
+
+  That changes what the upper points are *for*. Above ~41 °C this board is not reporting load,
+  it is reporting airflow that is not delivering — the condition the `AIRFLOW` block exists to
+  detect — so the points are spaced to that: 43 °C is above anything load alone produced here,
+  45 °C is the obstructed-intake measurement, and 47 °C is the no-fan ceiling. Verified with
+  the trimmed curve installed: the daemon takes the zone, holds state 4 through a 140-second
+  full-load run at 41.2 °C, and the 43 °C step is never entered by load alone.
+
 - **`uninstall.sh --force` also means "remove the files even though the board is not back to
   stock".** A refusal on that ground exits **4**. No snapshot at all is not evidence of a
   durable change, so an install that died before writing one stays removable.

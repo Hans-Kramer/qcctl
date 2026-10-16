@@ -228,7 +228,7 @@ over, which is what `FAN MODE curve` in a profile does.
   ZONE   cpuss-0-0
   POINT  30C STATE 0
   POINT  38C STATE 4
-  POINT  50C STATE 6
+  POINT  43C STATE 6
   HYSTERESIS 4C
   MIN_STATE 2
 >

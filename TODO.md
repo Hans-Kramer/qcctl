@@ -90,11 +90,6 @@ thing this project refuses to make.
   `quiet` *curve* is unreachable — a name collision across two files that invites exactly the
   wrong inference.
 
-- **Most `desktop` curve points cannot be reached.** This zone sits ~34–35 °C at idle and peaks
-  near 42 °C under full CPU load, so the points at 50, 65 and 75 °C are decorative; the curve
-  correctly held state 4 across a 56 s full-load run. Either trim the curve to the real
-  envelope or say in `fan.config` that the upper points are headroom. **[measured]**
-
 ---
 
 ## Gaps
