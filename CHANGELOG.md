@@ -62,6 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **`fanown_release_point()`'s release-point output, and the name.** All three callers
+  passed `NULL` for it. It returned the lowest `active` trip *minus its hysteresis*, and
+  comparing against that rather than against the trip is what left the fan pinned through
+  the hysteresis band — so the interface was still offering the threshold whose misuse was
+  the defect. Renamed `fanown_active_trip()` for what it actually returns.
+
 - **`CONF` and `FANCONF` from the `Makefile`.** They sat beside `STAGE` and `QCSTATS` in the
   same `?=` form that makes those two overridable, but nothing read them: both stage targets
   copy `etc/profiles.conf` and `etc/fan.config` literally. Wiring them up would have been
@@ -84,6 +90,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block alone, and refuses to report success unless both sets are populated and a path it
   must always find is present. Removing each of the fourteen entries in turn is caught;
   previously six of thirteen were.
+
+- **A release reported a fan state it had failed to set.** When the write was refused,
+  stderr said the fan was left where it was and stdout then asserted it had been set —
+  including "nothing is left for it to walk back", which is precisely the claim the refusal
+  makes false. Both the CLI and the daemon now report the refusal in the verdict. Verified
+  by making `cur_state` unwritable mid-hold: the release says the fan could not be set, and
+  the fan is indeed left at maximum.
+
+- **The comment above that release forbade what the code deliberately does.** It described
+  restoring the state found at take time, and warned that lowering a warm board is the one
+  move that can do harm — while the code writes 0 below the active trip and the cooling
+  map's floor at or above it, the floor being the governor's own answer there. A reader
+  following the comment would have reverted the fix and reintroduced the pinned fan. The
+  part that is still true — do not lower *below* what the governor wants — is kept.
 
 - **The uninstaller deleted the snapshot its own message told the operator to replay.**
   When `qcctl` is gone but the boot-state snapshot remains, step 3 reports that the control

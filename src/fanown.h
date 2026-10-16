@@ -32,11 +32,14 @@ int  fanown_take(struct fanown *fo, const struct surface *s,
                  char *err, size_t errlen);
 
 
-// out_mc: the governor's release point (lowest active trip minus its hysteresis).
-// out_trip_mc: that trip itself, which is the temperature above which the board is
-// actually hot. Either may be NULL.
-int  fanown_release_point(const struct surface *s, const char *zone_name, long *out_mc,
-                          long *out_trip_mc);
+// The lowest `active` trip on this zone, which is the temperature at or above which the
+// board needs cooling. Returns 0 if the zone has no active trip.
+//
+// This used to also hand back that trip minus its hysteresis - the governor's release
+// point - and comparing against THAT rather than the trip is what left the fan pinned
+// through the hysteresis band. No caller wants it now, so it is gone rather than left
+// here for someone to reach for.
+int  fanown_active_trip(const struct surface *s, const char *zone_name, long *out_trip_mc);
 
 // Command a cooling state.
 int  fanown_set(struct fanown *fo, int state);

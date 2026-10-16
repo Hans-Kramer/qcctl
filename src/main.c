@@ -594,24 +594,32 @@ static int cool_max(const struct surface *s, const char *statusf)
      * qcstats observes, qcctl acts; the daemon owns the one sampler and publishes
      * what it sees, so consuming that is the in-architecture way to learn a temperature.
      *
-     * Cool board: restore what we found. Leaving the fan at maximum here is not dangerous
-     * but it IS wrong - with no polling_delay and no crossing coming, it would sit at
-     * full speed indefinitely. Observed: still state 10 at 28.6 C a quarter of a minute
-     * after release.
+     * The fan is left in the state the governor itself would hold, so nothing has to be
+     * walked back: 0 below the active trip, and the cooling map's lower limit at or above
+     * it. Lowering a warm board to that limit is deliberate - it is the governor's own
+     * answer there, measured - and is NOT the same as lowering it below what the governor
+     * wants, which remains the one move that can do harm.
      *
-     * Warm board, or no reading available: leave it at maximum. Lowering it is the one
-     * move that can do harm. */
+     * Leaving maximum instead is wrong rather than dangerous: with no polling_delay the
+     * governor rewrites a cooling device only when its own target changes, and a downward
+     * trip transition moves one state, so a value it would not have chosen persists.
+     * Observed: still state 10 at 28.6 C a quarter of a minute after release.
+     *
+     * No temperature, or no readable limit: leave maximum, because without them there is
+     * no way to know what the governor wants. */
     {
         long temp_mc = 0, trip_mc = 0;
         int have_temp = status_temp_mc(statusf, &temp_mc);
-        int want_state = -1;
+        int want_state = -1, set_failed = 0;
         enum fanown_release how =
             fanown_release_mode(s, COOLMAX_ZONE, have_temp, temp_mc, &want_state);
 
-        fanown_release_point(s, COOLMAX_ZONE, NULL, &trip_mc);
-        if (want_state >= 0 && fanown_set(&fo, want_state) < 0)
+        fanown_active_trip(s, COOLMAX_ZONE, &trip_mc);
+        if (want_state >= 0 && fanown_set(&fo, want_state) < 0) {
             fprintf(stderr, "cool-max: could not set the fan to %d (%s) - releasing "
                     "anyway, it stays where it is\n", want_state, strerror(errno));
+            set_failed = 1;
+        }
         if (fanown_release(&fo, how) < 0)
             fprintf(stderr, "\ncool-max: RELEASE FAILED: %s\n", fo.release_err);
         else if (how == FANOWN_LEAVE_MAX) {
@@ -625,6 +633,13 @@ static int cool_max(const struct surface *s, const char *statusf)
                        "read, so the fan was not lowered - that is the safe direction.\n");
             printf("cool-max: the kernel lowers it by one state per trip transition, "
                    "which can take many heat/cool cycles.\n");
+        } else if (set_failed) {
+            /* The write above was refused, so the fan is wherever it already was. Saying
+             * "set to N" here would assert the outcome the stderr line just denied. */
+            printf("\ncool-max: zone%d returned to the kernel, but the fan could NOT be "
+                   "set to state %d - it is left as it was, and the kernel will not "
+                   "change it until the zone next changes trip state.\n",
+                   fo.zone_idx, want_state);
         } else {
             printf("\ncool-max: zone%d returned to the kernel, fan set to state %d - "
                    "what the kernel itself holds at %ld.%ld C (trip %ld.%ld C), so "

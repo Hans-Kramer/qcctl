@@ -1089,21 +1089,27 @@ badarg:
                      * CLI does - one shared decision, because this logic was triplicated
                      * and all three copies compared against the wrong threshold. */
                     long trip_mc = 0;
-                    int want_state = -1;
+                    int want_state = -1, set_failed;
                     enum fanown_release how =
                         fanown_release_mode(&s, strat_zone(&strat), have_temp_seen,
                                             last_temp_mc, &want_state);
 
-                    fanown_release_point(&s, strat_zone(&strat), NULL, &trip_mc);
-                    if (want_state >= 0 && fanown_set(&rt, want_state) < 0)
+                    fanown_active_trip(&s, strat_zone(&strat), &trip_mc);
+                    set_failed = 0;
+                    if (want_state >= 0 && fanown_set(&rt, want_state) < 0) {
                         logmsg("cool-max: could not set the fan to %d (%s) - releasing "
                                "anyway, it stays where it is", want_state, strerror(errno));
+                        set_failed = 1;
+                    }
                     if (fanown_release(&rt, how) < 0)
                         logmsg("cool-max RELEASE FAILED: %s", rt.release_err);
                     else if (how == FANOWN_LEAVE_MAX)
                         logmsg("cool-max: released; fan LEFT at maximum (%s)",
                                have_temp_seen ? "the kernel's own fan state could not be "
                                                 "read" : "no temperature");
+                    else if (set_failed)
+                        logmsg("cool-max: released, but the fan could NOT be set to "
+                               "state %d - left as it was", want_state);
                     else
                         logmsg("cool-max: released; fan set to state %d, what the kernel "
                                "holds at %ld.%ld C (trip %ld.%ld C)",

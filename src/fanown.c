@@ -70,26 +70,21 @@ int fanown_take(struct fanown *fo, const struct surface *s,
     return 0;
 }
 
-int fanown_release_point(const struct surface *s, const char *zone_name, long *out_mc,
-                         long *out_trip_mc)
+int fanown_active_trip(const struct surface *s, const char *zone_name, long *out_trip_mc)
 {
     const struct zone *z = surface_zone(s, zone_name);
-    long best = -1, hyst = 0;
+    long best = -1;
 
     if (!z)
         return 0;
     for (int i = 0; i < z->ntrips; i++) {
         if (strcmp(z->trips[i].type, "active"))
             continue;
-        if (best < 0 || z->trips[i].temp_mc < best) {
+        if (best < 0 || z->trips[i].temp_mc < best)
             best = z->trips[i].temp_mc;
-            hyst = z->trips[i].hyst_mc;
-        }
     }
     if (best < 0)
         return 0;
-    if (out_mc)
-        *out_mc = best - hyst;
     if (out_trip_mc)
         *out_trip_mc = best;
     return 1;
@@ -146,7 +141,7 @@ enum fanown_release fanown_release_mode(const struct surface *s, const char *zon
 
     if (out_state)
         *out_state = -1;
-    if (!have_temp || !z || !fanown_release_point(s, zone_name, NULL, &trip_mc))
+    if (!have_temp || !z || !fanown_active_trip(s, zone_name, &trip_mc))
         return FANOWN_LEAVE_MAX;
     if (temp_mc < trip_mc) {
         /* Trip clear: the kernel asks for no active cooling, and the next upward crossing
