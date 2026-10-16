@@ -140,6 +140,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the trimmed curve installed: the daemon takes the zone, holds state 4 through a 140-second
   full-load run at 41.2 °C, and the 43 °C step is never entered by load alone.
 
+  The envelope is this *cooler's*, not the board's — it was measured on the OE heatsink and
+  fan with nothing around them. A different heatsink, a slower or faster fan, an enclosure or
+  extra case fans all move it, and none of that is measurable from here, so points above the
+  measured band are kept as **headroom rather than trimmed away**: every shipped curve still
+  has a path to its top state, and `quiet` carries 55 and 65 °C points for exactly that
+  reason. What this release removed is the *gap* — `desktop` had nothing at all between 38
+  and 50 °C, which is the whole band this board lives in.
+
 - **An uninstall keeps the captured fan baseline, and `--purge` takes it.**
   `/var/lib/qcctl/fan-baseline` sat inside an `OWNED` directory, so a plain uninstall deleted
   it while `--purge` was still being offered as the destructive option. It is not ours: it
