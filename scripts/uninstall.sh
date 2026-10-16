@@ -137,6 +137,7 @@ fi
 note "3. resetting clocks and governors to stock"
 RESET_OK=0
 RESET_NOTE="not attempted"
+KEEP_SNAPSHOT=0
 
 # refuse <message> - stop before anything is removed, unless the operator insisted.
 refuse() {
@@ -158,6 +159,14 @@ if [ ! -x /usr/sbin/qcctl ]; then
         warn "    while IFS=\"\$(printf '\\t')\" read -r p v; do echo \"\$v\" > \"\$p\"; done"
         warn "(cooling_device lines are skipped, as --reset skips them: a fan state is"
         warn "the governor's output, and replaying one can leave the board uncooled.)"
+        if [ "$PURGE" = 1 ]; then
+            warn "--purge REMOVES that snapshot with everything else. Copy it elsewhere"
+            warn "first if you intend to replay it."
+        else
+            KEEP_SNAPSHOT=1
+            warn "The snapshot is kept for that purpose: it lives under an OWNED directory,"
+            warn "so this run puts it back after removing the rest."
+        fi
         RESET_NOTE="qcctl binary absent, snapshot left unreplayed"
     else
         note "   /usr/sbin/qcctl absent and no snapshot - nothing to reset with"
@@ -234,6 +243,13 @@ run systemctl disable qcctl-resume.service
 # ------------------------------------------------------------------- 5. remove files
 note "5. removing installed files"
 removed=none; kept=none; cfg=none
+# The snapshot step 3 told the operator to replay lives inside an OWNED directory, so the
+# removal below would delete the file that message points at. Stash and restore it, the
+# same way the manifest is stashed below.
+SNAPSTATE=
+if [ "$KEEP_SNAPSHOT" = 1 ] && [ "$DRY" = 0 ] && [ -f "$STATEF" ]; then
+    SNAPSTATE=$(mktemp) && cat "$STATEF" > "$SNAPSTATE"
+fi
 # Recorded BEFORE the manifest is deleted: it lives under an OWNED path, so testing for
 # it afterwards would fire the fallback below and purge paths it said to leave alone.
 USED_MANIFEST=0
@@ -299,6 +315,16 @@ if [ "$USED_MANIFEST" = 0 ] && [ -d /etc/qcctl ]; then
     else note "   KEEPING /etc/qcctl (your config; --purge removes it)"; fi
 fi
 run rm -rf /run/qcctl
+if [ -n "$SNAPSTATE" ]; then
+    mkdir -p "$(dirname "$STATEF")" 2>/dev/null
+    if cat "$SNAPSTATE" > "$STATEF" 2>/dev/null; then
+        chmod 0644 "$STATEF"
+        note "   kept $STATEF - the only record of how to revert this board by hand"
+    else
+        warn "could not keep $STATEF; the board's original values are now unrecorded"
+    fi
+    rm -f "$SNAPSTATE"
+fi
 
 # ----------------------------------------------------------------- 6. tell systemd
 note "6. reloading systemd"
@@ -316,7 +342,9 @@ for p in /usr/sbin/qcctld /usr/sbin/qcctl /etc/systemd/system/qcctld.service \
 done
 # /var/lib/qcctl legitimately survives when it holds the kept-config record.
 if [ -e /var/lib/qcctl ]; then
-    if [ -f "$MANIFEST" ] && ! grep -qv '^CONFIG' "$MANIFEST" 2>/dev/null; then
+    if [ "$KEEP_SNAPSHOT" = 1 ] && [ -f "$STATEF" ]; then
+        note "   /var/lib/qcctl kept, holding the boot-state snapshot to revert by hand"
+    elif [ -f "$MANIFEST" ] && ! grep -qv '^CONFIG' "$MANIFEST" 2>/dev/null; then
         note "   /var/lib/qcctl kept, holding only the config record"
     else
         warn "STILL PRESENT: /var/lib/qcctl (and it is not just a config record)"

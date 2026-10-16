@@ -85,6 +85,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   must always find is present. Removing each of the fourteen entries in turn is caught;
   previously six of thirteen were.
 
+- **The uninstaller deleted the snapshot its own message told the operator to replay.**
+  When `qcctl` is gone but the boot-state snapshot remains, step 3 reports that the control
+  surface was changed with nothing left to revert it, and prints the loop to replay the
+  snapshot by hand. Step 5 then removed `/var/lib/qcctl`, which holds it — so the operator
+  acted on the instruction after the run and found the file gone.
+
+  The snapshot is now stashed across the removal and put back, the way the kept-config
+  record already is, and the residue check knows it is legitimately kept rather than
+  reporting `INCOMPLETE`. `--purge` still removes it, and says so instead of printing a
+  replay instruction it is about to invalidate.
+
 - **`--force` left four files behind for good.** `uninstall.sh` falls back to a built-in
   path list when no manifest survives, which is exactly what `--force` is for, and that list
   omitted four paths the installer records `OWNED`: `/usr/share/doc/qcctl/USAGE.md`, the
