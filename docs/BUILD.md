@@ -69,7 +69,7 @@ pretending to be current.
 | `build/qcctl` | the command-line tool |
 | `build/qcctld` | the daemon |
 | `build/qcctl-check` | validates a config and exits; used by the installer |
-| `build/surface-dump` | prints the discovered control surface, for debugging |
+| `build/qcctl-surface-dump` | prints the discovered control surface; installed as a diagnostic |
 | `build/src/*.o`, `*.d` | objects and header dependencies |
 
 `polkit/`, `systemd/` and `etc/` are **inputs**, not outputs: the installer stages and ships

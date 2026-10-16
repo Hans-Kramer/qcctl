@@ -5,10 +5,12 @@
 *.bak
 
 
-# Build items
+# Build items. The whole directory: the Makefile writes every artifact under build/,
+# and a renamed binary must not become trackable by escaping a name in this list.
+/build/
 *.o
 qcctl
 qcctl-check
 qcctld
-surface-dump
+qcctl-surface-dump
 *.d

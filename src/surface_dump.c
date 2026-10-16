@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: Copyright (c) 2026 Hans Kramer
 //
-// Prints the discovered control surface. This is the Phase 1 development
-// artefact: it proves discovery against a fixture with no board attached, and
-// it is what a dry-run will report against.
+// Prints the discovered control surface: what qcctl can see, what it may write
+// and what each knob held at boot. A shipped diagnostic, and read-only.
 //
-//   QCCTL_SYSROOT=<a captured fixture tree> ./surface-dump
+//   QCCTL_SYSROOT=<a captured fixture tree> qcctl-surface-dump
 
 #define _GNU_SOURCE
 #include "surface.h"
@@ -36,14 +35,37 @@ static void show_knob(const char *label, const struct knob *k)
 #define QCCTL_VERSION "unknown"
 #endif
 
+static void usage(FILE *out)
+{
+    fprintf(out,
+"usage: qcctl-surface-dump [-h|--help] [-V|--version]\n"
+"\n"
+"Prints the control surface qcctl discovered here: cpufreq policies and their\n"
+"operating points, the GPU, thermal zones with their trips and cooling devices,\n"
+"and for each control point whether it is readable, writable, its mode and owner,\n"
+"and the value it held at boot. It writes nothing.\n"
+"\n"
+"  QCCTL_SYSROOT=<dir>   read a captured tree instead of this machine, which is\n"
+"                        how a dry run and the tests work with no board attached\n");
+}
+
 int main(int argc, char **argv)
 {
     const char *env = getenv(ENV_SYSROOT);
     struct surface s;
 
-    if (argc > 1 && (!strcmp(argv[1], "-V") || !strcmp(argv[1], "--version"))) {
-        printf("surface-dump %s\n", QCCTL_VERSION);
-        return 0;
+    if (argc > 1) {
+        if (!strcmp(argv[1], "-V") || !strcmp(argv[1], "--version")) {
+            printf("qcctl-surface-dump %s\n", QCCTL_VERSION);
+            return 0;
+        }
+        if (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) {
+            usage(stdout);
+            return 0;
+        }
+        fprintf(stderr, "qcctl-surface-dump: unknown argument '%s'\n", argv[1]);
+        usage(stderr);
+        return 2;
     }
 
     io_set_sysroot(env);

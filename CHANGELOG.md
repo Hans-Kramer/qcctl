@@ -37,6 +37,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the normalisations this would otherwise catch are prevented before any write. This is
   a backstop for what validation cannot model.
 
+- **`surface-dump` ships, as `qcctl-surface-dump`.** It was built, staged and
+  architecture-checked but never installed, so the one tool that answers "what does `qcctl`
+  think this board looks like" existed only in a build tree — and it is a diagnostic an
+  operator wants when a profile will not apply, which is exactly when the build tree is not
+  at hand.
+
+  It installs under this project's own prefix, like `qcctl-check` and `qcctl-fan-release`:
+  `surface-dump` in `/usr/sbin` is a name this project has no claim to. It is built under
+  that name too, so the staged file, the installed command and `-V` all agree — one tool
+  with two names is how a staged-but-never-installed binary went unnoticed.
+
+  It answers `--help` on stdout and exits 0, which earns it a place in the installer's
+  execution test; an unknown argument now goes to stderr and exits 2 rather than being
+  ignored. It is recorded `OWNED`, so an uninstall removes it, and CI asserts the
+  uninstaller's fallback list covers it.
+
 - **A GitHub Actions gate** (`.github/workflows/gate.yml`) on every push to `main` and every
   pull request. `check` runs `make check` — gcc, clang and the aarch64 cross build at
   `-Wall -Wextra -Werror` — and asserts that every toolchain is actually present, because

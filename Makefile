@@ -27,7 +27,7 @@ OBJ_COMMON := $(patsubst %.c,$(B)/%.o,$(SRC_COMMON))
 DEPS       := $(OBJ_COMMON:.o=.d) $(B)/src/surface_dump.d $(B)/src/profile_check.d \
               $(B)/src/main.d $(B)/src/daemon.d
 
-BIN  := $(B)/surface-dump
+BIN  := $(B)/qcctl-surface-dump
 BIN2 := $(B)/qcctl-check
 BIN3 := $(B)/qcctl
 BIN4 := $(B)/qcctld
@@ -124,7 +124,7 @@ stage:
 	@# The restore runs whatever the verdict: leaving board binaries in build/ on the way
 	@# out would recreate the bug this target exists to prevent.
 	@fail=0; \
-	 for f in $(STAGE)/qcctl $(STAGE)/qcctld $(STAGE)/qcctl-check $(STAGE)/surface-dump $(STAGE)/qcstats; do \
+	 for f in $(STAGE)/qcctl $(STAGE)/qcctld $(STAGE)/qcctl-check $(STAGE)/qcctl-surface-dump $(STAGE)/qcstats; do \
 	    m=$$(od -An -tx1 -j18 -N1 "$$f" | tr -d ' \n'); \
 	    [ "$$m" = b7 ] || { echo "stage: $$f is not aarch64 (e_machine=0x$$m)"; fail=1; }; \
 	 done; \
@@ -170,7 +170,7 @@ stage-native: all
 	@# exits 2 for a missing config, which says nothing about the architecture.
 	@host=$$(od -An -tx1 -j18 -N1 /bin/sh | tr -d ' \n'); \
 	 fail=0; \
-	 for f in $(STAGE)/qcctl $(STAGE)/qcctld $(STAGE)/qcctl-check $(STAGE)/surface-dump $(STAGE)/qcstats; do \
+	 for f in $(STAGE)/qcctl $(STAGE)/qcctld $(STAGE)/qcctl-check $(STAGE)/qcctl-surface-dump $(STAGE)/qcstats; do \
 	    m=$$(od -An -tx1 -j18 -N1 "$$f" | tr -d ' \n'); \
 	    [ "$$m" = "$$host" ] || { echo "stage-native: $$f is e_machine=0x$$m, this machine is 0x$$host"; fail=1; }; \
 	 done; \

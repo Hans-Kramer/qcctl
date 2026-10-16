@@ -105,10 +105,6 @@ thing this project refuses to make.
   already carry real modes and owners for a copied tree, so a suite would need no board and
   no root. The hook is built and unused.
 
-- **`surface-dump` is staged and architecture-checked but never installed.** Decide whether it
-  is a shipped diagnostic or a development-only tool, and make the Makefile and the installer
-  agree.
-
 - **`qcctl-check` has no `--help`** and exits 2 for it, which `install.sh` works around by
   excluding it from the binary smoke test. A broken `qcctl-check` is therefore not detected
   before it is trusted to gate the install.

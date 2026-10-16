@@ -569,7 +569,8 @@ json-schema 1
 ```
 
 Each answers with **its own name**, because four binaries ship from one tree and "which one
-did I just replace" is the question being asked. `qcctl-check` and `surface-dump` answer too.
+did I just replace" is the question being asked. `qcctl-check` and `qcctl-surface-dump`
+answer too.
 
 `qcstats` prints two lines, because the two move independently: its version changes whenever
 its code does, while `json-schema` is the **consumer contract** and is bumped only for a

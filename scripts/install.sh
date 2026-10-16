@@ -77,7 +77,7 @@ put() {
 # -------------------------------------------------------------------- pre-flight
 note "1. pre-flight"
 command -v systemctl >/dev/null 2>&1 || die "systemd not present"
-for f in qcctld qcctl qcstats profiles.conf fan.config \
+for f in qcctld qcctl qcstats qcctl-surface-dump profiles.conf fan.config \
          qcctld.service qcctl-resume.service fan-release.sh uninstall.sh \
          io.github.hans_kramer.qcctl.policy USAGE.md; do
     [ -f "$SRC/$f" ] || die "staging incomplete: $SRC/$f is missing"
@@ -95,7 +95,7 @@ done
 # 0x3e) and matches what the Makefile reads, so the two checks cannot disagree.
 host_em=$(od -An -tx1 -j18 -N1 /bin/sh | tr -d ' \n')
 [ -n "$host_em" ] || die "cannot read e_machine from /bin/sh - refusing to guess"
-for b in qcctld qcctl qcstats qcctl-check; do
+for b in qcctld qcctl qcstats qcctl-surface-dump qcctl-check; do
     # qcctl-check is optional in a staging directory; the rest are checked above.
     [ -f "$SRC/$b" ] || continue
     case "$(head -c 20 "$SRC/$b" | od -An -tx1 | tr -d ' \n')" in
@@ -108,11 +108,11 @@ for b in qcctld qcctl qcstats qcctl-check; do
         die "wrong-architecture binary in the staging directory. Rebuild with 'make stage'."
     fi
 done
-# Execution, now that the architecture is known good: --help exits 0 on all three, so a
+# Execution, now that the architecture is known good: --help exits 0 on all four, so a
 # failure here is a real one (a missing shared library, a truncated copy) rather than the
 # unconditional success the previous `|| true` chain always reported. qcctl-check is absent
 # from this list on purpose: it exits 2 for --help, because it wants a config path.
-for b in qcctld qcctl qcstats; do
+for b in qcctld qcctl qcstats qcctl-surface-dump; do
     "$SRC/$b" --help >/dev/null 2>&1 || die "$b is the right architecture but will not run"
 done
 note "   binaries: all e_machine=0x$host_em and executable here"
@@ -152,6 +152,7 @@ record OWNED "$STATE"
 note "3. binaries"
 put 0755 "$SRC/qcctld"   /usr/sbin/qcctld
 put 0755 "$SRC/qcctl"    /usr/sbin/qcctl
+put 0755 "$SRC/qcctl-surface-dump" /usr/sbin/qcctl-surface-dump
 put 0755 "$SRC/fan-release.sh" /usr/sbin/qcctl-fan-release
 # Install the uninstaller itself, so removal does not depend on the staging directory
 # surviving in /tmp.

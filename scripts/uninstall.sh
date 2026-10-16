@@ -61,6 +61,7 @@ KNOWN="/etc/systemd/system/qcctld.service
 /etc/systemd/system/qcctl-resume.service
 /usr/sbin/qcctld
 /usr/sbin/qcctl
+/usr/sbin/qcctl-surface-dump
 /usr/sbin/qcctl-fan-release
 /usr/sbin/qcctl-uninstall
 /usr/sbin/qcctl-check
