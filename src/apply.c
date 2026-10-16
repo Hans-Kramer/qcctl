@@ -793,6 +793,41 @@ static int is_governor_output(const char *path)
     return strstr(path, "/cooling_device") != NULL && strstr(path, "/cur_state") != NULL;
 }
 
+int apply_verify(const struct applyctx *ctx, struct verifyreport *r)
+{
+    char got[NAME_LEN];
+    int candidates = 0;
+
+    memset(r, 0, sizeof *r);
+    for (int i = 0; i < ctx->nw; i++) {
+        size_t n;
+
+        if (is_governor_output(ctx->w[i].path))
+            continue;
+        candidates++;
+        if (read_file_str(ctx->w[i].path, got, sizeof got) < 0) {
+            r->unreadable++;
+            continue;
+        }
+        /* read_file_str strips the newline; trailing blanks are not ours to interpret. */
+        n = strlen(got);
+        while (n > 0 && (got[n - 1] == ' ' || got[n - 1] == '\t' || got[n - 1] == '\r'))
+            got[--n] = '\0';
+        r->checked++;
+        if (!strcmp(got, ctx->w[i].value))
+            continue;
+        if (r->diverged++ == 0) {
+            snprintf(r->path, sizeof r->path, "%s", ctx->w[i].path);
+            snprintf(r->want, sizeof r->want, "%s", ctx->w[i].value);
+            snprintf(r->got,  sizeof r->got,  "%s", got);
+        }
+    }
+    /* Nothing read means nothing proved, which must not read as a clean result. */
+    if (candidates > 0 && r->checked == 0)
+        return -1;
+    return 0;
+}
+
 int state_restore(const char *path, char *err, size_t errlen, int *nrestored)
 {
     char line[PATH_MAXLEN + NAME_LEN + 8];

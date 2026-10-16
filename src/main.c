@@ -1121,6 +1121,34 @@ int main(int argc, char **argv)
             }
         }
         if (!dry) {
+            /* Read the plan back. A successful write only means the handler took the bytes;
+             * the operator is the one who needs told when the kernel kept something else. */
+            struct verifyreport vr;
+
+            if (apply_verify(&ctx, &vr) < 0) {
+                fprintf(stderr, "warning: none of the %d applied setting%s could be read "
+                        "back, so nothing was verified\n",
+                        ctx.nw, ctx.nw == 1 ? "" : "s");
+            } else {
+                if (vr.diverged) {
+                    printf("NOTE: %d of %d setting%s read back differently - the kernel "
+                           "accepted the write and kept another value.\n",
+                           vr.diverged, vr.checked, vr.checked == 1 ? "" : "s");
+                    printf("      first: %s\n            asked %s, holding %s\n",
+                           vr.path, vr.want, vr.got);
+                } else if (vr.checked) {
+                    /* Said positively on purpose: a check whose success looks exactly
+                     * like not having run is not evidence that anything was checked. */
+                    printf("verified %d setting%s read back as asked\n",
+                           vr.checked, vr.checked == 1 ? "" : "s");
+                }
+                /* Only in the else: rc < 0 already said nothing could be read, and two
+                 * messages for one condition is how a reader stops believing either. */
+                if (vr.unreadable)
+                    fprintf(stderr, "warning: %d applied setting%s could not be read "
+                            "back\n", vr.unreadable, vr.unreadable == 1 ? "" : "s");
+            }
+
             /* Record what is now in force. This is the ONLY source the daemon will take a
              * profile name from, which is what keeps the unprivileged REBASELINE request
              * unable to choose a profile. We are root here; nothing else writes this. */

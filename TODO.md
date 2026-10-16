@@ -66,12 +66,20 @@ thing this project refuses to make.
   disruptive actions across every profile, so adding `CPU_ONLINE 0 0` to an *unused* profile
   would make every `-m` demand `--allow-disruptive`.
 
-- **No read-back verification on any write.** `write_path_str` checks the byte count and
-  `close()` only — `uninstall.sh` now reads back after `--reset`, but nothing else does. A
-  value the kernel silently clamps commits successfully, and the drift baseline then
-  records what was *accepted* rather than what was requested — so clamping is
-  invisible to the drift watch, which is the one failure the staged min/max writes go to such
-  lengths to avoid.
+- **Two write paths still confirm nothing.** `apply` reads its plan back now, but
+  `qcctl --reset` replays a snapshot without building a plan, so nothing *inside* qcctl
+  checks it — `uninstall.sh` verifies it externally and a bare `qcctl --reset` does not.
+  And `--fan-baseline capture` drives the fan to a state and dwells 8 s before measuring;
+  a clamped write there would make the capture record the wrong state's rpm with nothing to
+  reveal it. That one wants a confirm-before-proceeding read at its own call site rather
+  than a change to `write_path_str`, whose eleven callers mostly have nothing to judge.
+
+  The premise of the old entry was too strong and is corrected here: `config_validate`
+  rejects off-OPP frequencies (`config.c:592`), out-of-range `UCLAMP`, min above max and
+  cooling states above `max_state`, so the silent clamping it described is largely
+  unreachable through a valid config. **[measured:** `qcctl -m` with `MAX 1800000kHz` is
+  refused before any write.**]** What remains is supersession by another writer, a driver
+  that accepts and ignores, and hardware the validator does not model.
 
 - **`qcctld --foreground` is accepted and ignored.** There is no fork path at all, so the flag
   promises a choice that does not exist. Either implement it or drop it. Confirmed 2026-10-14

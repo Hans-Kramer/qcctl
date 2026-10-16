@@ -42,6 +42,34 @@ struct applyctx {
     int          dry;           // resolve and report, write nothing
 };
 
+// What reading the plan back found. `checked` matters as much as `diverged`: a report of
+// zero divergences over zero readable settings has verified nothing.
+struct verifyreport {
+    int  checked;               // planned settings actually read back
+    int  diverged;              // of those, how many hold something else
+    int  unreadable;            // planned paths that could not be read now
+    char path[PATH_MAXLEN];     // the first divergence, for a one-line report
+    char want[NAME_LEN];
+    char got[NAME_LEN];
+};
+
+/* Read every planned write back and compare it with what was asked for.
+ *
+ * A successful write proves only that the store handler did not reject the bytes. It may
+ * have clamped a frequency to an available operating point, rounded a value to the
+ * hardware's granularity, or been superseded moments later by another writer - on this
+ * board sysfsutils and the thermal governor both write attributes a profile touches.
+ * drift_baseline() already records what the kernel ACCEPTED, which is right for watching
+ * drift; this is the half that says whether what it accepted is what was requested.
+ *
+ * Divergence is deliberately NOT a failure. Rolling a profile back because the kernel
+ * rounded a frequency to a valid operating point would be worse than the silence it
+ * replaces; a refused write already fails and rolls back in apply_commit().
+ *
+ * Returns -1 only when there were settings to check and none could be read.
+ * Cooling-device states are skipped for the same reason state_restore() skips them. */
+int apply_verify(const struct applyctx *ctx, struct verifyreport *r);
+
 // Resolve a profile to concrete writes without touching anything.
 int apply_plan(const struct profile *p, const struct surface *s,
                struct applyctx *ctx, char *err, size_t errlen);

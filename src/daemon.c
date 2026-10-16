@@ -863,7 +863,28 @@ badarg:
                        nrev, prev_profile, prof->name);
         }
 
-        /* Record what the kernel ACCEPTED, so later drift checks compare like with like. */
+        /* Record what the kernel ACCEPTED, so later drift checks compare like with like -
+         * and say so when what it accepted is not what was asked for, which the baseline
+         * alone cannot show. */
+        {
+            struct verifyreport vr;
+
+            if (apply_verify(&ctx, &vr) < 0) {
+                logmsg("warning: none of the %d applied settings could be read back, so "
+                       "nothing was verified", ctx.nw);
+            } else {
+                if (vr.diverged)
+                    logmsg("%d of %d applied settings hold a different value; first %s: "
+                           "asked %s, holding %s", vr.diverged, vr.checked,
+                           vr.path, vr.want, vr.got);
+                else if (vr.checked)
+                    logmsg("verified %d of %d applied settings read back as asked",
+                           vr.checked, ctx.nw);
+                if (vr.unreadable)
+                    logmsg("warning: %d applied setting(s) could not be read back",
+                           vr.unreadable);
+            }
+        }
         drift_baseline(&ctx);
         logmsg("watching %d of %d applied settings for drift", drift_n, ctx.nw);
     }
@@ -1028,6 +1049,18 @@ badarg:
                             logmsg("rebaseline: apply failed: %s", err);
                         else {
                             prof = np;
+                            {
+                                struct verifyreport vr2;
+
+                                if (apply_verify(&rc2, &vr2) < 0)
+                                    logmsg("warning: none of the %d applied settings could "
+                                           "be read back", rc2.nw);
+                                else if (vr2.diverged)
+                                    logmsg("%d of %d applied settings hold a different "
+                                           "value; first %s: asked %s, holding %s",
+                                           vr2.diverged, vr2.checked, vr2.path,
+                                           vr2.want, vr2.got);
+                            }
                             drift_baseline(&rc2);
                             last_drift_ms = mono_ms();
                             /* A rebaseline follows the CLI, which records a selection as

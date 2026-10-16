@@ -13,6 +13,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`apply` now reads its plan back and says whether the hardware kept it.** A successful
+  write proves only that the store handler took the bytes; it may have clamped a value,
+  rounded it, or been superseded moments later by another writer — on this board
+  `sysfsutils` writes cpufreq governors at boot and the thermal governor writes
+  `cur_state`. `apply_verify()` walks the plan after the commit and reports **requested vs
+  holding**, on both the CLI and the daemon:
+
+  ```
+  verified 15 settings read back as asked
+  ```
+
+  Divergence is a report, not a failure. A refused write already fails and rolls back in
+  `apply_commit()`; a value the kernel accepted and modified needs the operator told, not
+  undone — rolling a profile back because a frequency was rounded to a valid operating
+  point would be worse than the silence this replaces. It reports positively because a
+  success indistinguishable from the check not running is not evidence that anything was
+  checked, and it refuses to report success when there were settings to read and none could
+  be read. Cooling-device states are skipped, as `state_restore()` skips them.
+
+  Expect zero divergences on a healthy board: `config_validate` already rejects off-OPP
+  frequencies, out-of-range `UCLAMP`, min above max and cooling states above `max_state`,
+  so the normalisations this would otherwise catch are prevented before any write. This is
+  a backstop for what validation cannot model.
+
 - **A GitHub Actions gate** (`.github/workflows/gate.yml`) on every push to `main` and every
   pull request. `check` runs `make check` — gcc, clang and the aarch64 cross build at
   `-Wall -Wextra -Werror` — and asserts that every toolchain is actually present, because
