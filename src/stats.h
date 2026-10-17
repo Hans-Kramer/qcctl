@@ -26,6 +26,7 @@ struct stats {
     long  v_bad_last;           // the version on the most recent one, or -1
     int   exit_status;          // raw waitpid() status, set by stats_close()
     int   have_status;          // 0 = never reaped, so exit_status means nothing
+    int   killed;               // it did not go on SIGTERM and we escalated
     long  samples;              // complete samples read on this stream, ever
 };
 

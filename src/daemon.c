@@ -1638,6 +1638,8 @@ badarg:
         }
         control_close(&ctl);
         stats_close(&st);
+        if (st.killed)
+            logmsg("the sampler did not exit on SIGTERM and was killed");
         /* ONLY a clean stop is a success. Every other way out of the loop above is a
          * fail-safe, and systemd has to be told so. This was an unconditional rc = 0,
          * which overwrote the rc = 1 those paths set and reported a daemon that had gone

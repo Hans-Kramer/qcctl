@@ -205,6 +205,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A sampler could outlive the stop meant to end it, and hold the daemon's exit open until
+  systemd resorted to `SIGKILL`.** Seen once as a 90-second `systemctl stop`. Three things
+  were wrong in how `qcctld` starts and ends its one `qcstats` child, and all three are fixed:
+
+  - **`SIG_IGN` survives `execve`.** The daemon ignores `SIGPIPE` — a dying sampler must not
+    kill it — and the sampler inherited that: measured on the running board, `SigIgn 0x1000`.
+    Closing its pipe therefore could not end it either, so a sampler that missed its signal
+    was beyond every means the daemon had short of `SIGKILL`. The child now resets the
+    dispositions it must not keep before `exec`, and the sampler's `SigIgn` reads `0`.
+  - **Between `fork` and `exec` a child still carries the parent's handlers.** A `SIGTERM` to
+    the process group in that window was caught by the daemon's own handler *inside the
+    child* and dropped; after `exec` the signal was already spent. Microseconds wide, which
+    is why the original resisted sixteen reproduction attempts. The same reset closes it.
+  - **The wait for the child was unbounded.** `waitpid(pid, &status, 0)`, with handlers
+    installed through `signal()` and therefore `SA_RESTART`, so a `SIGTERM` arriving there set
+    `stop_flag` and the wait simply resumed. Demonstrated against the previous binary with a
+    sampler that ignores `SIGTERM`: twenty seconds after the signal it was still in `do_wait`
+    (`wait4`) and would have stayed there. It now polls with `WNOHANG` for 500 ms, escalates
+    to `SIGKILL` on the group, and logs that it had to — the same case exits in a second.
+
+  The signal is sent *before* the pipe is closed, so a sampler with teardown of its own still
+  runs it: verified with `qcstats --gpu-busy`, whose private trace instance is gone and whose
+  tracepoint is back to 0 after the stop. A well-behaved sampler is still reaped rather than
+  killed, which keeps the exit status the log depends on to tell "qcstats is not installed"
+  (127) from "something went wrong".
+
 - **The daemon's own release left the fan where the strategy had it.** `fan_release()` handed
   the zone back under a never-lower rule — `max(the state the strategy drove it to, the state
   found when the zone was taken)` — so switching off a curve or target profile returned an

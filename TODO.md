@@ -56,18 +56,6 @@ thing this project refuses to make.
 
 ## Defects — other
 
-- **A `systemctl stop` hung for 90 seconds and ended in `SIGKILL`.** Observed once, on
-  2026-10-16, with the SIGTERM landing in the same second as a live strategy switch
-  (`curve 'quiet'` → `target 'held40'`): the daemon logged the switch and the new take, then
-  nothing, and systemd killed it at the `TimeoutStopSec` boundary. `ExecStopPost` did its job
-  — `qcctl-fan-release` returned the zone a second later — but a `SIGKILL`ed daemon runs no
-  release of its own. Not reproduced in 16 targeted attempts across the switch window, so the
-  trigger is narrower than "switch strategies, then stop". The only unbounded wait on that
-  path is `stats_close()`'s `waitpid(pid, &status, 0)`, and `signal()` installs handlers with
-  `SA_RESTART`, so a SIGTERM arriving there sets `stop_flag` and the wait simply resumes.
-  Bounding it — poll with `WNOHANG`, then `SIGKILL` the group — makes the worst case a
-  fraction of a second whether or not that is the cause. **[measured, once]**
-
 - **`publish_status()` fails silently.** If the status file cannot be opened it simply
   returns, so a consumer sees a missing or stale file with nothing in the journal to say
   why. The default pidfile now creates `/run/qcctl` when systemd has not, so this only

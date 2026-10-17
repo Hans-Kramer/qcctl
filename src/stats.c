@@ -39,6 +39,16 @@ int stats_open(struct stats *st, const char *cmd, char *err, size_t errlen)
          * be a GRANDchild - and killing only our direct child then orphans it to
          * init. */
         setpgid(0, 0);
+        /* Default dispositions before exec, for two separate reasons. SIG_IGN SURVIVES
+         * execve, so the sampler ran with SIGPIPE ignored, inherited from this daemon -
+         * measured, SigIgn 0x1000 on the live sampler - and closing its pipe could then
+         * never end it. And between fork and exec the child still carries this daemon's
+         * SIGTERM handler, so a signal to the group in that window is caught and dropped
+         * rather than killing it. Either way the sampler outlives the stop meant to end it. */
+        signal(SIGPIPE, SIG_DFL);
+        signal(SIGTERM, SIG_DFL);
+        signal(SIGINT,  SIG_DFL);
+        signal(SIGHUP,  SIG_DFL);
         /* stdout -> pipe; stderr is left alone so sampler errors stay visible */
         close(pipefd[0]);
         if (dup2(pipefd[1], STDOUT_FILENO) < 0)
@@ -56,29 +66,71 @@ int stats_open(struct stats *st, const char *cmd, char *err, size_t errlen)
     return 0;
 }
 
+/* A well-behaved sampler goes in milliseconds: qcstats breaks out of its sleep on the
+ * signal rather than finishing the interval. These are generous, and bounded is the point. */
+#define TERM_GRACE_MS 500
+#define KILL_GRACE_MS 200
+
+/* waitpid() with a deadline. 1 and `status` filled if we reaped it; 0 if it is still alive
+ * at the deadline, or was never ours to reap. */
+static int reap_within(pid_t pid, int *status, int ms)
+{
+    int waited_ms = 0;
+
+    for (;;) {
+        pid_t r = waitpid(pid, status, WNOHANG);
+
+        if (r == pid)
+            return 1;
+        if (r < 0 && errno != EINTR)
+            return 0;               /* ECHILD: already reaped, or not ours */
+        if (waited_ms >= ms)
+            return 0;
+        usleep(20000);
+        waited_ms += 20;
+    }
+}
+
 void stats_close(struct stats *st)
 {
-    if (st->fd >= 0)
-        close(st->fd);
-    st->fd = -1;
+    /* Signal BEFORE closing the pipe: a sampler with teardown of its own - qcstats
+     * restoring a tracepoint, say - gets its chance to run it, and closing the read end
+     * afterwards frees one that is blocked writing into a full pipe. */
     if (st->pid > 0) {
         /* A NEGATIVE pid signals the whole process group, so a sampler that
          * /bin/sh forked dies with its shell instead of being orphaned. Fall back
          * to the single process if the group is somehow gone. */
         if (kill(-st->pid, SIGTERM) < 0)
             (void)kill(st->pid, SIGTERM);
+    }
+    if (st->fd >= 0)
+        close(st->fd);
+    st->fd = -1;
+    if (st->pid > 0) {
+        int status = 0;
+
         /* KEEP the status. It used to be thrown away, and with it the only evidence of
          * WHY the stream ended - 127 from /bin/sh is "command not found", which is the
-         * difference between "something went wrong" and "qcstats is not installed". */
-        {
-            int status = 0;
-            if (waitpid(st->pid, &status, 0) == st->pid) {
+         * difference between "something went wrong" and "qcstats is not installed".
+         *
+         * The wait is BOUNDED. It was waitpid(pid, &status, 0), and signal() installs
+         * handlers with SA_RESTART, so a SIGTERM arriving here set stop_flag and the wait
+         * resumed - a child that does not go held the daemon's exit open until systemd's
+         * stop timeout turned it into a SIGKILL. */
+        if (reap_within(st->pid, &status, TERM_GRACE_MS)) {
+            st->exit_status = status;
+            st->have_status = 1;
+        } else {
+            st->killed = 1;
+            if (kill(-st->pid, SIGKILL) < 0)
+                (void)kill(st->pid, SIGKILL);
+            if (reap_within(st->pid, &status, KILL_GRACE_MS)) {
                 st->exit_status = status;
                 st->have_status = 1;
             }
         }
-        /* Anything still in the group after a grace period gets the hammer. */
-        usleep(200000);
+        /* The shell waits for what it forked, so reaping it means the sampler is already
+         * gone. This is the belt for the case where it is not. */
         (void)kill(-st->pid, SIGKILL);
     }
     st->pid = -1;
@@ -88,7 +140,11 @@ const char *stats_exit_hint(const struct stats *st, const char *path)
 {
     static char msg[256];
 
-    if (!st || !st->have_status)
+    if (!st)
+        return NULL;
+    if (st->killed)
+        return "the sampler did not exit on SIGTERM and was killed";
+    if (!st->have_status)
         return NULL;
     if (WIFSIGNALED(st->exit_status)) {
         /* Worth saying: an OOM kill looks exactly like this, and on a small board it is
