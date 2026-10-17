@@ -27,27 +27,6 @@ thing this project refuses to make.
 
 ## Defects — fan and thermal
 
-- **A `SIGKILL`, or `fan-release.sh`, can leave the fan at a state nothing will correct.**
-  Releases are covered — one now hands the fan back in the state the kernel itself would
-  hold — but a `SIGKILL` runs no release at all, and `fan-release.sh` only re-enables the
-  zone: it never writes `cur_state`, and it is a silent no-op when the zone is already
-  enabled, which is exactly the state a stuck fan is in. The kernel does not clean up after
-  either, because it rewrites a cooling device only when its own target changes, so a value
-  it would not have chosen sheds one state per heat/cool cycle — on an idle board, never.
-  Measured: with the trip clear and the zone enabled, a fan forced to 10 held through 15 s
-  of idling, 8 `emul_temp` writes and 10 `mode` disabled→enabled toggles. One fix covers
-  both paths and belongs in `qcctld` — watch for a `cur_state` higher than the zone's
-  thermal state justifies and correct it. Bounds from
-  `/proc/device-tree/thermal-zones/cpuss-0-0-thermal/cooling-maps/map-active`:
-  `cooling-device = <phandle, 4, THERMAL_NO_LIMIT>`. **[measured]**
-
-  A second route needs no `SIGKILL` at all, measured 2026-10-17: a `FAILSAFE full` release
-  leaves the fan at maximum *by design*, and if the next profile has no fan strategy there is
-  then nothing to walk it back — the board sat at state 10 at 32 °C until it was written by
-  hand. So the corrector is not only a crash backstop; it is what makes `FAILSAFE full` a
-  safe default to ship. Releases themselves are now correct on every other path, so this is
-  the whole of what is left. **[measured]**
-
 - **The cooling-map floor is read from only the first `cooling-device` entry of each map.**
   One map with one cooling device is all this board has, so matching entries by phandle to
   the cdev's own node was not needed. A zone binding several devices would need that.
@@ -99,9 +78,10 @@ thing this project refuses to make.
   excluding it from the binary smoke test. A broken `qcctl-check` is therefore not detected
   before it is trusted to gate the install.
 
-- **Two paths nothing verifies:** suspend/resume (the board resumes from neither `freeze` nor
-  `deep`, so the hook cannot be exercised here — stated in the unit itself) and the `SIGKILL`
-  fan-release backstop. A cold boot is now covered: on a power cycle the daemon snapshots
+- **One path nothing verifies:** suspend/resume — the board resumes from neither `freeze` nor
+  `deep`, so the hook cannot be exercised here, which the unit itself states. The `SIGKILL`
+  fan-release backstop is now covered: the script is exercised in the state a kill leaves,
+  on the board and against seven `QCCTL_SYSROOT` fixture cases. A cold boot is covered too: on a power cycle the daemon snapshots
   `policy2` as the vendor's `ondemand` and applies `schedutil` over it, so the
   `After=sysfsutils.service` ordering holds. **[measured]**
 

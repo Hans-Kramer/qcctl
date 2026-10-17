@@ -71,23 +71,43 @@ int fanown_take(struct fanown *fo, const struct surface *s,
     return 0;
 }
 
-int fanown_active_trip(const struct surface *s, const char *zone_name, long *out_trip_mc)
+/* Index of the lowest `active` trip, or -1. Both answers below come from this one scan. */
+static int lowest_active_trip(const struct zone *z)
 {
-    const struct zone *z = surface_zone(s, zone_name);
-    long best = -1;
+    int best = -1;
 
     if (!z)
-        return 0;
+        return -1;
     for (int i = 0; i < z->ntrips; i++) {
         if (strcmp(z->trips[i].type, "active"))
             continue;
-        if (best < 0 || z->trips[i].temp_mc < best)
-            best = z->trips[i].temp_mc;
+        if (best < 0 || z->trips[i].temp_mc < z->trips[best].temp_mc)
+            best = i;
     }
-    if (best < 0)
+    return best;
+}
+
+int fanown_active_trip(const struct surface *s, const char *zone_name, long *out_trip_mc)
+{
+    const struct zone *z = surface_zone(s, zone_name);
+    int i = lowest_active_trip(z);
+
+    if (i < 0)
         return 0;
     if (out_trip_mc)
-        *out_trip_mc = best;
+        *out_trip_mc = z->trips[i].temp_mc;
+    return 1;
+}
+
+int fanown_clear_point(const struct surface *s, const char *zone_name, long *out_mc)
+{
+    const struct zone *z = surface_zone(s, zone_name);
+    int i = lowest_active_trip(z);
+
+    if (i < 0)
+        return 0;
+    if (out_mc)
+        *out_mc = z->trips[i].temp_mc - z->trips[i].hyst_mc;
     return 1;
 }
 
@@ -157,6 +177,30 @@ enum fanown_release fanown_release_mode(const struct surface *s, const char *zon
     if (out_state)
         *out_state = lower;
     return FANOWN_LEAVE_AS_IS;
+}
+
+int fanown_correct_stale(const struct surface *s, const char *zone_name, long temp_mc,
+                         long *out_clear_mc, int *out_state)
+{
+    const struct zone *z = surface_zone(s, zone_name);
+    char path[PATH_MAXLEN];
+    uint64_t state = 0;
+    long clear_mc = 0;
+
+    if (!z || z->nbound != 1)
+        return 0;
+    if (!fanown_clear_point(s, zone_name, &clear_mc) || temp_mc >= clear_mc)
+        return 0;
+    spath(path, sizeof path, THERMAL_DIR "/cooling_device%d/cur_state", z->bound[0]);
+    if (read_file_u64(path, &state) < 0)
+        return -1;
+    if (state == 0)
+        return 0;
+    if (out_clear_mc)
+        *out_clear_mc = clear_mc;
+    if (out_state)
+        *out_state = (int)state;
+    return write_path_str(path, "0") < 0 ? -1 : 1;
 }
 
 int fanown_set(struct fanown *fo, int state)

@@ -42,6 +42,27 @@ int  fanown_take(struct fanown *fo, const struct surface *s,
 // here for someone to reach for.
 int  fanown_active_trip(const struct surface *s, const char *zone_name, long *out_trip_mc);
 
+// The temperature below which the kernel treats the zone's lowest active trip as CLEAR:
+// the trip minus its hysteresis. Below it the governor's own answer is state 0, so a
+// higher state down there is one it never chose and will never correct, since it rewrites
+// a cooling device only on a trip transition.
+//
+// This is the number fanown_release_point() used to return, and it was deleted for being
+// the wrong one THERE: a release asks "what would the kernel hold here", and inside the
+// band that is the map's floor, not maximum - comparing against this is what left the fan
+// pinned. The question here is the opposite one, "is this a state the kernel would never
+// hold", and that one does have to exclude the band, or a correction would fight a
+// governor entitled to its answer.
+int  fanown_clear_point(const struct surface *s, const char *zone_name, long *out_mc);
+
+// Lower a cooling state the kernel would never hold, on a zone we do NOT own: below the
+// clear point above, its own answer is 0. Acts only when the zone drives exactly one
+// cooling device, because with several, which one is the fan is a guess.
+// 1 = it wrote 0, and *out_* describe what it found; 0 = nothing to do; -1 = read or
+// write failure. The caller owns the policy of how often to do this, and when to stop.
+int  fanown_correct_stale(const struct surface *s, const char *zone_name, long temp_mc,
+                          long *out_clear_mc, int *out_state);
+
 // Command a cooling state.
 int  fanown_set(struct fanown *fo, int state);
 

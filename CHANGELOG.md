@@ -205,6 +205,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A fan state nothing would ever correct.** The kernel rewrites a cooling device only on a
+  trip transition, and a downward one lowers it by a single state, so a value it did not
+  choose is never cleaned up — on an idle board, never at all. Measured: a fan forced to 10
+  held through 15 s of idling, 8 `emul_temp` writes and 10 zone `mode` toggles. Releases are
+  correct now, but two paths still ended there: a `SIGKILL`, which runs no release at all,
+  and a `FAILSAFE full` release, which leaves the fan at maximum *by design* and had nothing
+  to walk it back once a profile with no fan strategy took over — measured, state 10 at
+  32 °C. Both are covered now, each in the only place that can see it:
+
+  - **`qcctl-fan-release`**, the unit's `ExecStopPost`, sets the fan as well as re-enabling
+    the zone. It acts only where it finds the zone *disabled*, which is what says no release
+    ran: a clean release leaves it enabled, and `FAILSAFE full`'s maximum is not this
+    script's to undo.
+  - **`qcctld` watches the fan whenever it is not driving it**, and lowers a state the kernel
+    would never hold.
+
+  "Would never hold" is the trip *minus its hysteresis*. Below that the governor's own answer
+  is 0; above it the governor is entitled to a throttled state, and a correction would be a
+  fight it wins. That is deliberately **not** the threshold a release uses — a release asks
+  what the kernel would hold *here*, and inside the band that is the cooling map's floor.
+  Same number, opposite question, which is why `fanown_clear_point()` says so at the one
+  place someone would otherwise merge the two.
+
+  The watchdog is bounded: one correction a minute at most, three at most before it says
+  something else is driving the fan and stops, and the count is forgotten after an hour
+  without one — so "three strikes" means three in quick succession rather than three in a
+  fortnight of uptime. It acts only where the zone drives exactly one cooling device, because
+  with several, which one is the fan is a guess.
+
+  Measured on the board: a `FAILSAFE full` leftover is cleaned up by the next daemon,
+  state 9 → 0 at 34.9 °C; hand-written states are corrected at 33–35 °C and left alone at
+  35.3, 36.4, 36.8 and 43.5 °C; the rate limit holds; the third correction announces the cap
+  and a fourth write stays at 10; the forget window resets the count. And the backstop, in
+  exactly the state a `SIGKILL` leaves behind: *fan was state 6 at 34200mC, below the
+  35000mC its trip clears at - set to 0*. Its restraint is measured too: it does not undo
+  a failsafe, and it will not guess between two cooling devices. Every decision it makes is
+  reachable through `QCCTL_SYSROOT` on a copied tree, with no board and no root.
+
 - **A sampler could outlive the stop meant to end it, and hold the daemon's exit open until
   systemd resorted to `SIGKILL`.** Seen once as a 90-second `systemctl stop`. Three things
   were wrong in how `qcctld` starts and ends its one `qcstats` child, and all three are fixed:

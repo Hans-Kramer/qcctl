@@ -50,6 +50,15 @@
  * unprivileged GUI) without sd-bus. */
 #define DEF_STATUS  "/run/qcctl/status"
 #define DEF_FANBASE "/var/lib/qcctl/fan-baseline"
+/* The fan watchdog corrects a state the kernel would never hold, on a zone we are not
+ * driving. Bounded on purpose: a state that keeps coming back is someone's decision rather
+ * than a leftover, and this daemon reports drift instead of fighting it. */
+#define FANWD_INTERVAL_MS 60000
+#define FANWD_TRIES 3
+/* And the cap is forgotten after this long without one, so "three strikes" means three in
+ * quick succession - someone fighting us - rather than three in a fortnight of uptime. */
+#define FANWD_FORGET_MS 3600000
+#define ENV_FANWD_FORGET "QCCTL_FANWD_FORGET_MS"   /* for the tests; see --stats-cmd */
 /* rpm needs time to settle after a state change */
 #define AIRFLOW_DWELL_MS 8000
 
@@ -1122,6 +1131,14 @@ badarg:
          * can wake you, counting wake-ups stops measuring time. */
         long last_sample_ms = mono_ms();
         long stale_after_ms = (long)strat_poll_ms(&strat) * 3 * MISS_LIMIT;
+        long fanwd_last_ms = 0;
+        long fanwd_forget_ms = FANWD_FORGET_MS;
+        int fanwd_n = 0, fanwd_warned = 0;
+        {
+            const char *e = getenv(ENV_FANWD_FORGET);
+            if (e && *e && atol(e) > 0)
+                fanwd_forget_ms = atol(e);
+        }
         int prev_holds = 0, coolmax_owned = 0;
         long coolmax_refused_ms = 0;
         struct strategy strat_next;
@@ -1482,6 +1499,39 @@ badarg:
                     cur = next;
                 }
             }
+            /* Not driving the fan: the kernel owns the zone and will not lower a state it
+             * did not choose, because it rewrites a cooling device only on a trip
+             * transition - which an idle board never makes. */
+            if (fanwd_n && mono_ms() - fanwd_last_ms > fanwd_forget_ms) {
+                logmsg("fan watchdog: nothing to correct for %ld minutes - the %d earlier "
+                       "correction(s) are forgotten", fanwd_forget_ms / 60000, fanwd_n);
+                fanwd_n = 0;
+            }
+            if (!rt.owned && fanwd_n < FANWD_TRIES
+                && (!fanwd_last_ms || mono_ms() - fanwd_last_ms >= FANWD_INTERVAL_MS)) {
+                long clear_mc = 0;
+                int was = 0;
+                int r = fanown_correct_stale(&s, strat_zone(&strat), temp,
+                                             &clear_mc, &was);
+
+                if (r > 0) {
+                    fanwd_last_ms = mono_ms();
+                    fanwd_n++;
+                    logmsg("fan was state %d at %ld.%ldC, below the %ld.%ldC its trip "
+                           "clears at - set to 0, which is the kernel's own answer there%s",
+                           was, temp / 1000, (temp % 1000) / 100,
+                           clear_mc / 1000, (clear_mc % 1000) / 100,
+                           fanwd_n >= FANWD_TRIES
+                           ? ". That is the third time, so something else is setting it;"
+                             " not correcting it again." : "");
+                } else if (r < 0 && !fanwd_warned) {
+                    fanwd_warned = 1;
+                    logmsg("warning: cannot read or write the fan state of zone '%s' "
+                           "(%s) - a state left behind there will not be corrected",
+                           strat_zone(&strat), strerror(errno));
+                }
+            }
+
             /* Drift check on its own slow timer: a dozen sysfs reads, and drift is a
              * human-timescale event. */
             if (drift_n >= 0 && mono_ms() - last_drift_ms >= drift_ms) {
