@@ -10,6 +10,7 @@
 #include <stddef.h>
 
 struct fanown {
+    char zone[NAME_LEN];                // the zone we took, so a release needs no caller to say
     char zone_mode_before[NAME_LEN];    // always "enabled" when owned; take refuses otherwise
     char fan_state_before[NAME_LEN];
     int  zone_idx;

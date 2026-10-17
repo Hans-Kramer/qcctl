@@ -396,9 +396,16 @@ static int fan_take(struct fanown *fo, const struct surface *s, const struct str
     return 0;
 }
 
-static void fan_release(struct fanown *fo, const struct strategy *g)
+/* `have_temp`/`temp_mc` are the last reading this daemon saw. With one, the fan is left
+ * where the kernel itself would hold it - the same decision --cool-max makes. Without one
+ * the old never-lower handback stands: no temperature is not a licence to raise the fan,
+ * and it is not a licence to lower it either. */
+static void fan_release(struct fanown *fo, const struct strategy *g,
+                        const struct surface *s, int have_temp, long temp_mc)
 {
-    int before;
+    enum fanown_release how;
+    long trip_mc = 0;
+    int before, want = -1, set_failed = 0;
 
     if (!fo->owned)
         return;
@@ -412,16 +419,48 @@ static void fan_release(struct fanown *fo, const struct strategy *g)
                    fo->max_state ? fo->max_state : 10);
         return;
     }
-    if (fanown_release(fo, FANOWN_HANDBACK) < 0) {
+
+    how = fanown_release_mode(s, fo->zone, have_temp, temp_mc, &want);
+    if (how == FANOWN_LEAVE_MAX && !have_temp)
+        how = FANOWN_HANDBACK;
+    fanown_active_trip(s, fo->zone, &trip_mc);
+    if (want >= 0 && fanown_set(fo, want) < 0) {
+        logmsg("could not set the fan to %d (%s) - releasing anyway, it stays where it is",
+               want, strerror(errno));
+        set_failed = 1;
+    }
+    if (fanown_release(fo, how) < 0) {
         logmsg("RELEASE FAILED: %s", fo->release_err);
         return;
     }
-    if (before >= 0 && fo->last_state > before)
-        logmsg("release: keeping fan at state %d rather than the %d found when taken - "
-               "lowering it could leave a hot board uncooled until the next trip crossing",
-               fo->last_state, before);
-    logmsg("released zone%d back to the kernel (mode=%s)",
-           fo->zone_idx, fo->zone_mode_before[0] ? fo->zone_mode_before : "?");
+    if (how == FANOWN_LEAVE_MAX)
+        logmsg("released zone%d back to the kernel (mode=%s); fan LEFT at maximum - the "
+               "cooling map's floor could not be read, so more cooling is the safe guess",
+               fo->zone_idx, fo->zone_mode_before[0] ? fo->zone_mode_before : "?");
+    else if (how == FANOWN_HANDBACK) {
+        /* What fanown_release() writes on this path, and -1 when the take could not read
+         * cur_state - in which case it writes nothing and there is no state to name. */
+        int held = fo->last_state > before ? fo->last_state : before;
+
+        if (held >= 0)
+            logmsg("released zone%d back to the kernel (mode=%s); no temperature, so the "
+                   "fan was not lowered from state %d", fo->zone_idx,
+                   fo->zone_mode_before[0] ? fo->zone_mode_before : "?", held);
+        else
+            logmsg("released zone%d back to the kernel (mode=%s); no temperature and no "
+                   "recorded fan state, so the fan was left untouched", fo->zone_idx,
+                   fo->zone_mode_before[0] ? fo->zone_mode_before : "?");
+    }
+    else if (set_failed)
+        logmsg("released zone%d back to the kernel (mode=%s), but the fan could NOT be set "
+               "to state %d - it stays where it was", fo->zone_idx,
+               fo->zone_mode_before[0] ? fo->zone_mode_before : "?", want);
+    else
+        logmsg("released zone%d back to the kernel (mode=%s); fan set to state %d, what "
+               "the kernel holds at %ld.%ld C (trip %ld.%ld C) - it decides from here",
+               fo->zone_idx, fo->zone_mode_before[0] ? fo->zone_mode_before : "?",
+               want, temp_mc / 1000, (temp_mc % 1000) / 100,
+               trip_mc / 1000, (trip_mc % 1000) / 100);
 }
 
 static int fan_set(struct fanown *fo, int state)
@@ -445,7 +484,9 @@ static int sampler_recover(struct stats *st, const char *cmd, struct fanown *rt,
     char err[ERRLEN];
     int delay_ms;
 
-    fan_release(rt, g);                 /* blind: hand the fan back before anything else */
+    /* No temperature, deliberately: the sampler has just died and this path's whole
+     * purpose is conservatism. fan_release() then keeps the never-lower handback. */
+    fan_release(rt, g, s, 0, 0);        /* blind: hand the fan back before anything else */
     stats_close(st);
     /* stats_close() reaped the child, so NOW the real cause is available. Logged here
      * because "sampler stream ended (EOF)" on its own told a user whose qcstats had been
@@ -710,6 +751,9 @@ int main(int argc, char **argv)
     struct fanbase fbase;
     int have_fbase = 0;
     char prev_profile[NAME_LEN] = "";
+    /* The last reading seen, out here because the release at `out:` needs it. */
+    long last_temp_mc = 0;
+    int have_temp_seen = 0;
     const struct profile *prof = NULL;
     struct strategy strat;
     char err[ERRLEN];
@@ -996,8 +1040,6 @@ badarg:
         char cmd[512];
         int misses = 0, cur;
         int v_bad_logged = 0;       /* the schema complaint is made ONCE, not per line */
-        long last_temp_mc = 0;
-        int have_temp_seen = 0;
         long last_drift_ms = mono_ms(), unreach_since_ms = 0;
         int target_unreachable = 0;
         int sampler_attempt = 0;
@@ -1270,7 +1312,7 @@ badarg:
                 int resampled = 0;
 
                 if (rt.owned)
-                    fan_release(&rt, &strat);
+                    fan_release(&rt, &strat, &s, have_temp_seen, last_temp_mc);
                 strat = strat_next;
                 strat_pending = 0;
                 cur = -1;
@@ -1611,7 +1653,7 @@ badarg:
     }
 
 out:
-    fan_release(&rt, &strat);
+    fan_release(&rt, &strat, &s, have_temp_seen, last_temp_mc);
     if (made_pid) {
         unlink(pidf);
         /* No daemon means no profile in force, so the hook must not re-apply one. */

@@ -41,17 +41,12 @@ thing this project refuses to make.
   `/proc/device-tree/thermal-zones/cpuss-0-0-thermal/cooling-maps/map-active`:
   `cooling-device = <phandle, 4, THERMAL_NO_LIMIT>`. **[measured]**
 
-- **A strategy release leaves the fan where the strategy left it.** `fan_release()` releases
-  through `FANOWN_HANDBACK`, which writes `max(the state we drove it to, the state found when
-  the zone was taken)` and never lowers — so switching off a curve or target profile hands
-  the kernel an enabled zone with the fan still high, and the kernel lowers it only on a trip
-  crossing an idle board never makes. Measured twice on 2026-10-16: switching from `held40`
-  to `balanced` at 34 °C left `cur_state` **8** and it stayed there, and an earlier switch
-  left **7**. `--cool-max` and `--fan-baseline capture` already hand back the state the
-  kernel itself would hold — `fanown_release_mode()`, 0 below the zone's active trip and the
-  cooling map's floor at or above it — and the daemon's own release is the path that still
-  does not. The comment above the code states the old reasoning, *do not lower a hot board*,
-  which `fanown_release_mode()` answers properly. **[measured]**
+  A second route needs no `SIGKILL` at all, measured 2026-10-17: a `FAILSAFE full` release
+  leaves the fan at maximum *by design*, and if the next profile has no fan strategy there is
+  then nothing to walk it back — the board sat at state 10 at 32 °C until it was written by
+  hand. So the corrector is not only a crash backstop; it is what makes `FAILSAFE full` a
+  safe default to ship. Releases themselves are now correct on every other path, so this is
+  the whole of what is left. **[measured]**
 
 - **The cooling-map floor is read from only the first `cooling-device` entry of each map.**
   One map with one cooling device is all this board has, so matching entries by phandle to

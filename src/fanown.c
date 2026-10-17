@@ -28,6 +28,7 @@ int fanown_take(struct fanown *fo, const struct surface *s,
     if (!cd) { snprintf(err, errlen, "no cooling device '%s'", cdev_name); return -1; }
     fo->zone_idx = z->idx;
     fo->cdev_idx = cd->idx;
+    snprintf(fo->zone, sizeof fo->zone, "%s", zone_name);
 
     /* The mode we must write back. Without it the release below would skip the zone and
      * leave nothing managing the fan, so an unreadable mode refuses the take outright. */

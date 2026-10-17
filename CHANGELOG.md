@@ -205,6 +205,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The daemon's own release left the fan where the strategy had it.** `fan_release()` handed
+  the zone back under a never-lower rule — `max(the state the strategy drove it to, the state
+  found when the zone was taken)` — so switching off a curve or target profile returned an
+  *enabled* zone with the fan still high. The kernel lowers a cooling device only on a trip
+  transition and only by one state, so on an idle board that value stayed: measured, state
+  **8** held at 34 °C after a switch from `held40` to `balanced`, and **7** after an earlier
+  one.
+
+  It now makes the same decision `--cool-max` and `--fan-baseline capture` already make —
+  `fanown_release_mode()`: 0 below the zone's active trip, the cooling map's lower limit at or
+  above it. The daemon was the third copy of this logic and the one that was never converted.
+  `struct fanown` also records the zone it took, so a release reads the trip of the zone it
+  actually holds rather than of whichever strategy the caller passed it.
+
+  Two paths are deliberately unchanged. `FAILSAFE full` still leaves the fan at maximum,
+  because that is what losing the daemon is meant to mean for a board that asked for it. And a
+  *blind* release — the sampler has died, so there is no temperature — keeps the never-lower
+  handback: no reading is not a licence to lower the fan, and not one to raise it either.
+
+  Measured on the board, all five paths: a switch at idle writes 0; a switch while hot writes
+  the map floor; a `systemctl stop` at idle writes 0 and it stays 0 with no daemon left to
+  correct anything; `failsafe=full` still leaves maximum; a killed sampler leaves the fan where
+  it was and says so. The handback also shows from the other side — once released, the kernel
+  starts moving the state on its own again (4 → 5 while hot, 0 → its floor near the trip),
+  which it never did with a value the daemon had left behind.
+
 - **The gate asserting the `--force` path checked less than it reported.** It matched each
   installed path as a substring anywhere in `uninstall.sh`, so any path that is a prefix of
   a sibling — `/usr/share/doc/qcctl` inside `…/USAGE.md`, `/usr/sbin/qcctl` inside
