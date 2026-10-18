@@ -7,24 +7,18 @@ anything else is read from the source and not yet confirmed on hardware.
 
 ---
 
-## Defects — removal path
+## Defects
 
-None open. Removal matters more than install here, because a durable change you cannot
-reverse is the thing this project refuses to make: the reset is verified against the
-snapshot, the manifest is append-only so nothing an install creates goes unrecorded, and
-neither script keeps the only copy of anything in `/tmp`.
-
----
-
-## Defects — fan and thermal
+One open, and it is parked. Removal matters more than install here, because a durable change
+you cannot reverse is the thing this project refuses to make, and that path is clear: the
+reset is verified against the snapshot, the manifest is append-only so nothing an install
+creates goes unrecorded, and neither script keeps the only copy of anything in `/tmp`.
 
 - **The cooling-map floor is read from only the first `cooling-device` entry of each map.**
   One map with one cooling device is all this board has, so matching entries by phandle to
   the cdev's own node was not needed. A zone binding several devices would need that.
-
----
-
-## Defects — other
+  **Parked:** there is no way to exercise a fix here, so it would ship unverified — which is
+  worse than a limitation that is written down.
 
 ---
 
