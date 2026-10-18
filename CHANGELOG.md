@@ -205,6 +205,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An install that died halfway could leave files no uninstall would ever find.** The
+  manifest is the only record of what is on disk, and step 2 emptied it before step 3 started
+  re-recording — so between those two points every path the previous install had created was
+  unaccounted for. The installer's own header promises the opposite: *appended to as each path
+  is created, so an install that dies halfway is still fully removable*. It is append-only
+  now, with this run's lines below a `#RUN` marker that `ours()` reads back to, and a
+  de-duplication once the install has succeeded and nothing can be lost by rewriting it. The
+  copy of the previous manifest in `/tmp` went with it: it was never removed, so every
+  `--upgrade` left one behind, and `/tmp` is the wrong place for the only record of what a
+  board owns.
+
+  Demonstrated on the board by making step 5b fail — a regular file where its directory goes.
+  The previous installer lost three entries, the polkit policy among them while the file was
+  still on disk; this one loses nothing, writes no temp file, and leaves nothing on disk
+  unaccounted for.
+
+  Losing an entry is **permanent**, which that same test showed by accident: with no record
+  that the polkit policy was ours, the next install recorded it `PREEXISTING` — the honest
+  answer on the evidence it had — and `qcctl-uninstall` then correctly left it on the board.
+  Ownership, once lost, cannot be recovered by any later run, and that is what made this
+  worth fixing ahead of louder things.
+
+  **`uninstall.sh` had the same shape, and is fixed with it.** Three `mktemp` files and no
+  `trap`, two of which — the boot-state snapshot and the captured fan baseline — are the
+  *only* copy of the operator's own data between the removal in step 5 and the restore after
+  it. A trap now puts those two back rather than deleting them, and says where the copy is
+  if it cannot; only the manifest snapshot, a copy of a file the run is removing anyway, is
+  discarded. Both the normal restores and the trap go through one `restore_stash()`, because
+  two copies of a restore is how the fan release ended up with three. Measured inside that
+  window, with the baseline's only copy in `/tmp`: a simulated failure exits **7** and a
+  `SIGTERM` to the process group exits **143**, each putting the baseline back
+  byte-identical and leaving no orphan behind. The signal exits are in `--help` now.
+
 - **A fan state nothing would ever correct.** The kernel rewrites a cooling device only on a
   trip transition, and a downward one lowers it by a single state, so a value it did not
   choose is never cleaned up — on an idle board, never at all. Measured: a fan forced to 10

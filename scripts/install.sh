@@ -7,7 +7,9 @@
 #
 # /var/lib/qcctl/install.manifest is appended to as each path is created, so an install
 # that dies halfway is still fully removable. Paths that already existed are recorded
-# PREEXISTING and removal leaves them alone.
+# PREEXISTING and removal leaves them alone. An upgrade APPENDS to what earlier installs
+# recorded rather than replacing it, and the file is de-duplicated once the install has
+# succeeded - so there is no moment at which a path on disk is unrecorded.
 #
 # Usage: install.sh [--dry-run] [--upgrade]
 set -u
@@ -17,7 +19,7 @@ for a in "$@"; do
     case "$a" in
         --dry-run) DRY=1 ;;
         --upgrade) UPGRADE=1 ;;
-        -h|--help) sed -n '5,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '5,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "install.sh: unknown argument '$a'" >&2; exit 2 ;;
     esac
 done
@@ -40,12 +42,19 @@ record() {
     printf '%s %s\n' "$1" "$2" >> "$MANIFEST"
 }
 
-# ours <path> - was this path recorded as ours by a PREVIOUS install?
+# ours <path> - was this path recorded as ours BEFORE this run started?
 # "It exists" and "it is not ours" are different facts, and only the second is PREEXISTING.
+# Everything above the last #RUN marker is what earlier installs recorded, which is why
+# this needs no copy of the file: the marker is the copy.
 ours() {
-    [ -f "$OLDMANIFEST" ] || return 1
-    awk -v p="$1" '($1 == "OWNED" || $1 == "CONFIG") && $2 == p { found = 1 }
-                   END { exit !found }' "$OLDMANIFEST"
+    [ -f "$MANIFEST" ] || return 1
+    _mark=$(grep -n '^#RUN' "$MANIFEST" 2>/dev/null | tail -1 | cut -d: -f1)
+    if [ -n "${_mark:-}" ]; then
+        head -n "$((_mark - 1))" "$MANIFEST"
+    else
+        cat "$MANIFEST"
+    fi | awk -v p="$1" '($1 == "OWNED" || $1 == "CONFIG") && $2 == p { found = 1 }
+                        END { exit !found }'
 }
 
 # put <mode> <src> <dst> [tag]   - install a file, recording ownership honestly.
@@ -131,20 +140,22 @@ note "   ok"
 
 # --------------------------------------------------- state dir and the manifest
 note "2. state directory and manifest"
-# Snapshot any previous manifest BEFORE touching the new one - ours() reads it to tell
-# our own files from the board's.
-OLDMANIFEST=
-if [ -f "$MANIFEST" ]; then
-    OLDMANIFEST=$(mktemp) && cp "$MANIFEST" "$OLDMANIFEST" && note "   previous manifest: $(wc -l < "$OLDMANIFEST") entries"
-fi
+[ -f "$MANIFEST" ] && note "   previous manifest: $(grep -c '^[A-Z]' "$MANIFEST") entries"
 if [ -d "$STATE" ]; then note "   exists: $STATE"
 elif [ "$DRY" = 1 ]; then note "   would create $STATE"
 else
     install -o root -g root -m 0755 -d "$STATE" || die "cannot create $STATE"
     note "   created $STATE"
 fi
+# Emptying this file was the one moment where a path on disk had nothing claiming it: the
+# previous install's entries were gone and this run had not re-recorded them yet, so an
+# install that died in between left files no uninstall would ever find. The old entries
+# stay, this run's are appended below a marker, and step 9 de-duplicates once it is safe.
 if [ "$DRY" = 0 ]; then
-    : > "$MANIFEST"; chmod 0644 "$MANIFEST"   # always start clean; OLDMANIFEST holds history
+    [ -f "$MANIFEST" ] || : > "$MANIFEST"
+    chmod 0644 "$MANIFEST"
+    printf '#RUN %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)" \
+        >> "$MANIFEST"
 fi
 record OWNED "$STATE"
 
@@ -343,6 +354,19 @@ for p in 0 2 4; do
     g=/sys/devices/system/cpu/cpufreq/policy$p/scaling_governor
     [ -r "$g" ] && note "   policy$p governor: $(cat "$g")"
 done
+# Now that nothing can fail and lose a path, keep the last line for each one and drop the
+# markers. A failed rewrite leaves the appended superset in place, which is the safe
+# direction: more recorded than exists is recoverable, less is not.
+if [ "$DRY" = 0 ] && [ -f "$MANIFEST" ]; then
+    _tidy=$MANIFEST.tidy
+    if awk '/^[A-Z]/ { last[$2] = $0 } END { for (p in last) print last[p] }' "$MANIFEST" \
+         | sort -k2 > "$_tidy" && [ -s "$_tidy" ] && mv "$_tidy" "$MANIFEST"; then
+        chmod 0644 "$MANIFEST"
+    else
+        rm -f "$_tidy"
+        warn "could not de-duplicate $MANIFEST; it lists everything, possibly twice"
+    fi
+fi
 note "   manifest: $(grep -c '^OWNED' "$MANIFEST") owned, $(grep -c '^PREEXISTING' "$MANIFEST") pre-existing"
 # The boot-state snapshot is what --reapply and the resume hook depend on.
 if [ -f /var/lib/qcctl/boot-state ]; then

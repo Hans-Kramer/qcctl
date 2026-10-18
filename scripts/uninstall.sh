@@ -24,6 +24,7 @@
 #
 # Exit: 0 removed   1 incomplete, or unsafe to continue   2 bad argument
 #       3 no manifest and no --force   4 the board is not back to stock
+#       130/143 interrupted - the stashed snapshot and fan baseline are put back first
 #
 # Installed as /usr/sbin/qcctl-uninstall, and removes itself while running.
 set -u
@@ -35,7 +36,7 @@ for a in "$@"; do
         --purge)   PURGE=1 ;;
         --force)   FORCE=1 ;;
         # --help prints the header block above; this range tracks it.
-        -h|--help) sed -n '5,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '5,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "uninstall.sh: unknown argument '$a'" >&2; exit 2 ;;
     esac
 done
@@ -82,6 +83,36 @@ run() { if [ "$DRY" = 1 ]; then echo "    would: $*"; else "$@" >/dev/null 2>&1 
 note() { echo "  $*"; }
 warn() { echo "  !! $*"; }
 die()  { echo "  ** $*"; exit "${2:-1}"; }
+
+# restore_stash <tmp> <dst> - put a stashed file back where it belongs. 0 = done, 1 = there
+# was no stash, 2 = it could not be written. Between the removal in step 5 and this, <tmp>
+# holds the ONLY copy, so a failure says where it is and leaves it there.
+restore_stash() {
+    [ -n "$1" ] && [ -f "$1" ] || return 1
+    mkdir -p "$(dirname "$2")" 2>/dev/null
+    if cat "$1" > "$2" 2>/dev/null; then
+        chmod 0644 "$2"
+        rm -f "$1"
+        return 0
+    fi
+    warn "$2 could not be written - your only copy is $1, left there on purpose"
+    return 2
+}
+
+# A run that dies or is interrupted must not leave the operator's own data under a random
+# /tmp name. The two stashes are PUT BACK rather than deleted; only the manifest snapshot,
+# which is a copy of a file this run is removing anyway, is thrown away.
+cleanup() {
+    restore_stash "${SNAPSTATE:-}" "$STATEF" &&
+        warn "put the boot-state snapshot back at $STATEF after an interrupted run"
+    restore_stash "${BASESTATE:-}" "$FANBASE" &&
+        warn "put the fan baseline back at $FANBASE after an interrupted run"
+    [ -n "${SNAP:-}" ] && rm -f "$SNAP"
+    return 0
+}
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 [ "$(id -u)" = 0 ] || { echo "uninstall.sh: must run as root" >&2; exit 1; }
 [ "$DRY" = 1 ] && echo "== DRY RUN - nothing will be changed =="
@@ -272,7 +303,10 @@ if [ -f "$MANIFEST" ]; then
     note "   using manifest $MANIFEST"
     # Snapshot first: the manifest lives inside /var/lib/qcctl, which is itself OWNED.
     SNAP=$(mktemp) || die "cannot create a temp file"
-    cat "$MANIFEST" > "$SNAP"
+    # De-duplicated, markers dropped: a manifest left behind by a FAILED install holds
+    # that run's lines as well as the previous install's, which would double the counts.
+    awk '/^[A-Z]/ { last[$2] = $0 } END { for (p in last) print last[p] }' "$MANIFEST" \
+        | sort -k2 > "$SNAP"
     removed=$(grep -c '^OWNED' "$SNAP" 2>/dev/null); removed=${removed:-0}
     kept=$(grep -c '^PREEXISTING' "$SNAP" 2>/dev/null); kept=${kept:-0}
     # Deepest paths first so directories are empty when we reach them.
@@ -329,26 +363,10 @@ if [ "$USED_MANIFEST" = 0 ] && [ -d /etc/qcctl ]; then
     else note "   KEEPING /etc/qcctl (your config; --purge removes it)"; fi
 fi
 run rm -rf /run/qcctl
-if [ -n "$SNAPSTATE" ]; then
-    mkdir -p "$(dirname "$STATEF")" 2>/dev/null
-    if cat "$SNAPSTATE" > "$STATEF" 2>/dev/null; then
-        chmod 0644 "$STATEF"
-        note "   kept $STATEF - the only record of how to revert this board by hand"
-    else
-        warn "could not keep $STATEF; the board's original values are now unrecorded"
-    fi
-    rm -f "$SNAPSTATE"
-fi
-if [ -n "$BASESTATE" ]; then
-    mkdir -p "$(dirname "$FANBASE")" 2>/dev/null
-    if cat "$BASESTATE" > "$FANBASE" 2>/dev/null; then
-        chmod 0644 "$FANBASE"
-        note "   kept $FANBASE - an uninstall cannot re-measure it"
-    else
-        warn "could not keep $FANBASE; a reinstall will need a fresh capture"
-    fi
-    rm -f "$BASESTATE"
-fi
+restore_stash "$SNAPSTATE" "$STATEF" &&
+    note "   kept $STATEF - the only record of how to revert this board by hand"
+restore_stash "$BASESTATE" "$FANBASE" &&
+    note "   kept $FANBASE - an uninstall cannot re-measure it"
 
 # ----------------------------------------------------------------- 6. tell systemd
 note "6. reloading systemd"

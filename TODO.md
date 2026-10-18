@@ -9,19 +9,10 @@ anything else is read from the source and not yet confirmed on hardware.
 
 ## Defects — removal path
 
-Removal matters more than install here, because a durable change you cannot reverse is the
-thing this project refuses to make.
-
-- **`/tmp` leak, and an upgrade hazard.** The previous manifest is copied to a `mktemp` file
-  that is never removed, so each `--upgrade` leaves one behind — and that copy is the only
-  record of the prior install's ownership, since step 2 truncates the real manifest. An
-  upgrade that dies after the truncate and before re-recording a path therefore loses it:
-  the file stays on disk, no manifest claims it, and a later uninstall reports
-  `REMOVED cleanly` while leaving it behind. Narrower than it first looks — the pre-flight
-  checks staging completeness and binary architecture *before* the truncate, so the likely
-  failures are caught first, and what remains is an I/O failure during steps 3–5. The
-  consequence is still permanent and silent, and it falsifies the installer's own header:
-  "an install that dies halfway is still fully removable".
+None open. Removal matters more than install here, because a durable change you cannot
+reverse is the thing this project refuses to make: the reset is verified against the
+snapshot, the manifest is append-only so nothing an install creates goes unrecorded, and
+neither script keeps the only copy of anything in `/tmp`.
 
 ---
 
@@ -59,10 +50,6 @@ thing this project refuses to make.
   unreachable through a valid config. **[measured:** `qcctl -m` with `MAX 1800000kHz` is
   refused before any write.**]** What remains is supersession by another writer, a driver
   that accepts and ignores, and hardware the validator does not model.
-
----
-
-## Config and text
 
 ---
 
