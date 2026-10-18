@@ -26,12 +26,6 @@ neither script keeps the only copy of anything in `/tmp`.
 
 ## Defects — other
 
-- **`publish_status()` fails silently.** If the status file cannot be opened it simply
-  returns, so a consumer sees a missing or stale file with nothing in the journal to say
-  why. The default pidfile now creates `/run/qcctl` when systemd has not, so this only
-  bites when `--status-file` points somewhere unwritable — but a failure that explains
-  itself once would still be better than none.
-
 - **The disruptive gate is file-wide but checked per-apply.** `config_validate` collects
   disruptive actions across every profile, so adding `CPU_ONLINE 0 0` to an *unused* profile
   would make every `-m` demand `--allow-disruptive`.

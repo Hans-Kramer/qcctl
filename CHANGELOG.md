@@ -205,6 +205,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`publish_status()` failed silently, four ways.** A path too long for its `.new` sibling,
+  a `fopen` that failed, buffered writes that only surface at `fclose` — a full filesystem
+  arrives there, not earlier — and a failed `rename`. Each simply returned, so a consumer saw
+  a stale status file or none at all and the journal said nothing about why.
+
+  It now reports the first failure of a run and the recovery after it, which is the shape the
+  drift check already uses: at a two-second poll a per-pass complaint would bury everything
+  else, and the fact does not change between passes. Measured on the board: one warning
+  across 14 s of polls with the directory missing, *status file … is being written again* when
+  it appeared, and a second warning when it was removed again — the silence is bounded by the
+  fact rather than by the first occurrence. `logmsg()` moved above its first caller for this,
+  which is where a log primitive belongs anyway.
+
 - **Two write paths confirmed nothing.** `apply` reads its plan back; the two commands whose
   whole purpose is a particular state did not.
 

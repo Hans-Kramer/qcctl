@@ -237,6 +237,43 @@ struct statusinfo {
     long airflow_dev_pct;
 };
 
+/* Set once, when the daemon detaches: a background process has no terminal to print to. */
+static int log_to_syslog = 0;
+
+static void logmsg(const char *fmt, ...)
+{
+    va_list ap;
+    struct timespec ts;
+
+    va_start(ap, fmt);
+    if (log_to_syslog) {
+        vsyslog(LOG_INFO, fmt, ap);
+        va_end(ap);
+        return;
+    }
+    clock_gettime(CLOCK_REALTIME, &ts);
+    printf("[%ld.%03ld] ", (long)ts.tv_sec, ts.tv_nsec / 1000000);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+    fflush(stdout);
+}
+
+/* Said on the transition into failing and out of it again, not per write: at this poll rate
+ * a per-pass complaint would bury everything else in the journal, and the fact does not
+ * change between passes. The recovery is said too, so a journal that carries the failure
+ * also shows whether it is still true. */
+static int status_failing;
+
+static void status_publish_failed(const char *what, const char *why)
+{
+    if (status_failing)
+        return;
+    status_failing = 1;
+    logmsg("warning: cannot publish the status file %s: %s - a consumer sees a stale file "
+           "or none at all. Said once, until it works again.", what, why);
+}
+
 static void publish_status(const char *path, const struct statusinfo *si)
 {
     const char *profile = si->profile;
@@ -252,11 +289,15 @@ static void publish_status(const char *path, const struct statusinfo *si)
 
     if (!path || !*path)
         return;
-    if (snprintf(tmp, sizeof tmp, "%s.new", path) >= (int)sizeof tmp)
+    if (snprintf(tmp, sizeof tmp, "%s.new", path) >= (int)sizeof tmp) {
+        status_publish_failed(path, "the path leaves no room for a .new sibling");
         return;
+    }
     f = fopen(tmp, "w");
-    if (!f)
+    if (!f) {
+        status_publish_failed(tmp, strerror(errno));
         return;
+    }
     fprintf(f, "{\"v\":1");
     fprintf(f, ",\"profile\":\"%s\"", profile ? profile : "");
     fprintf(f, ",\"profile_source\":\"%s\"",
@@ -336,9 +377,22 @@ static void publish_status(const char *path, const struct statusinfo *si)
     fprintf(f, ",\"sampler\":\"%s\"", si->sampler_down ? "down" : "ok");
     fprintf(f, ",\"ts\":%ld", (long)time(NULL));
     fprintf(f, "}\n");
-    if (fclose(f) != 0) { unlink(tmp); return; }
-    if (rename(tmp, path) != 0)
+    /* fclose reports the write errors fprintf buffered away - a full filesystem arrives
+     * here, not above. */
+    if (fclose(f) != 0) {
+        status_publish_failed(tmp, strerror(errno));
         unlink(tmp);
+        return;
+    }
+    if (rename(tmp, path) != 0) {
+        status_publish_failed(path, strerror(errno));
+        unlink(tmp);
+        return;
+    }
+    if (status_failing) {
+        status_failing = 0;
+        logmsg("status file %s is being written again", path);
+    }
 }
 
 /* Publish an honest snapshot while the sampler is down. */
@@ -359,27 +413,6 @@ static void publish_degraded(const char *path, const char *profile, const char *
     publish_status(path, &si);
 }
 
-/* Set once, when the daemon detaches: a background process has no terminal to print to. */
-static int log_to_syslog = 0;
-
-static void logmsg(const char *fmt, ...)
-{
-    va_list ap;
-    struct timespec ts;
-
-    va_start(ap, fmt);
-    if (log_to_syslog) {
-        vsyslog(LOG_INFO, fmt, ap);
-        va_end(ap);
-        return;
-    }
-    clock_gettime(CLOCK_REALTIME, &ts);
-    printf("[%ld.%03ld] ", (long)ts.tv_sec, ts.tv_nsec / 1000000);
-    vprintf(fmt, ap);
-    va_end(ap);
-    printf("\n");
-    fflush(stdout);
-}
 
 static int fan_take(struct fanown *fo, const struct surface *s, const struct strategy *g,
                     char *err, size_t errlen)
