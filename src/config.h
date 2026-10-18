@@ -87,16 +87,22 @@ int config_parse_file(const char *path, struct pconfig *c);
 // accepted or rejected WHOLE: a half-applied profile leaves the machine in a
 // state no config describes.
 //
-// disruptive[] collects actions that are legal and KNOWN TO WORK, but whose effect is
-// drastic enough that applying one should be a deliberate act. Currently exactly one:
-// offlining cpu0, the boot CPU.
+int config_validate(const struct pconfig *c, const struct surface *s,
+                    char *err, size_t errlen);
+
+// The disruptive actions of ONE profile: legal and KNOWN TO WORK, but drastic enough that
+// applying one should be a deliberate act. Currently exactly one thing, offlining cpu0.
+// Returns how many were found, and stores the first `maxdisr` of them when `disr` is given.
 //
-// NOTE: this mechanism now means ONE thing. A genuinely unverified setting, if one ever
+// Per profile, because the gate is about what is being applied. config_validate() used to
+// collect them across the whole file, which made a setting in a profile nobody applies
+// demand a flag from everybody.
+//
+// NOTE: this mechanism means ONE thing. A genuinely unverified setting, if one ever
 // appears, needs its own gate rather than borrowing this one. One flag meaning two things
 // is how the name went wrong the first time.
-int config_validate(const struct pconfig *c, const struct surface *s,
-                    char *err, size_t errlen,
-                    const struct action **disruptive, size_t maxdisr, size_t *ndisr);
+size_t config_disruptive(const struct profile *p, const struct action **disr,
+                         size_t maxdisr);
 
 const struct profile *config_find(const struct pconfig *c, const char *name_or_id);
 

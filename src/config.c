@@ -567,9 +567,36 @@ static const struct cpu_online *find_cpu(const struct surface *s, int cpu)
 
 #define VFAIL(...) do { snprintf(err, errlen, __VA_ARGS__); return -1; } while (0)
 
+/* The one definition of what makes an action disruptive. Currently exactly one thing:
+ * offlining cpu0, the boot CPU. It WORKS - confirmed on hardware, and it re-onlines
+ * cleanly - so this is not a validity question, which is why the validator no longer
+ * answers it. */
+static int act_is_disruptive(const struct action *a)
+{
+    return a->kind == ACT_CPU_ONLINE && a->target_id == 0 && a->value == 0;
+}
+
+size_t config_disruptive(const struct profile *p, const struct action **disr, size_t maxdisr)
+{
+    size_t n = 0;
+
+    if (!p)
+        return 0;
+    for (int i = 0; i < p->nact; i++) {
+        if (!act_is_disruptive(&p->act[i]))
+            continue;
+        if (disr) {
+            if (n == maxdisr)
+                break;              /* the count is what was stored, never more */
+            disr[n] = &p->act[i];
+        }
+        n++;
+    }
+    return n;
+}
+
 static int validate_action(const struct action *a, const struct surface *s,
-                           char *err, size_t errlen,
-                           const struct action **disr, size_t maxdisr, size_t *ndisr)
+                           char *err, size_t errlen)
 {
     const struct policy *p;
     const struct cdev *cd;
@@ -606,12 +633,8 @@ static int validate_action(const struct action *a, const struct surface *s,
             VFAIL("line %d: cpu%d does not exist", a->line, a->target_id);
         if (!cpu->present)
             VFAIL("line %d: cpu%d has no 'online' node", a->line, a->target_id);
-        /* Offlining cpu0 WORKS - confirmed on hardware, and it re-onlines cleanly.
-         * It is gated anyway because taking the boot CPU offline is drastic, which is
-         * a different reason from the one this check originally had. Report it rather
-         * than allow or drop it silently. */
-        if (a->target_id == 0 && a->value == 0 && ndisr && *ndisr < maxdisr)
-            disr[(*ndisr)++] = a;
+        /* Offlining cpu0 is gated, not invalid - and the gate belongs to the profile that
+         * asks for it, so it is config_disruptive()'s answer and not this function's. */
         return 0;
 
     case ACT_GPU_GOVERNOR:
@@ -692,11 +715,8 @@ static int validate_action(const struct action *a, const struct surface *s,
 }
 
 int config_validate(const struct pconfig *c, const struct surface *s,
-                    char *err, size_t errlen,
-                    const struct action **disr, size_t maxdisr, size_t *ndisr)
+                    char *err, size_t errlen)
 {
-    if (ndisr)
-        *ndisr = 0;
     if (errlen)
         err[0] = '\0';
 
@@ -704,7 +724,7 @@ int config_validate(const struct pconfig *c, const struct surface *s,
         const struct profile *p = &c->prof[i];
 
         for (int j = 0; j < p->nact; j++)
-            if (validate_action(&p->act[j], s, err, errlen, disr, maxdisr, ndisr) < 0)
+            if (validate_action(&p->act[j], s, err, errlen) < 0)
                 return -1;
 
         /* Cross-checks that only make sense once a whole profile is known. */

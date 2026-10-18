@@ -849,7 +849,7 @@ badarg:
         fprintf(stderr, "%s:%d: %s\n", conf, pc.err_line, pc.err);
         return 3;
     }
-    if (config_validate(&pc, &s, err, sizeof err, NULL, 0, NULL) < 0) {
+    if (config_validate(&pc, &s, err, sizeof err) < 0) {
         fprintf(stderr, "%s: %s\n", conf, err);
         return 3;
     }

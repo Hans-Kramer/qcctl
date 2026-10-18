@@ -205,6 +205,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A disruptive setting in one profile demanded `--allow-disruptive` from every other.**
+  `config_validate()` collected them across the whole file, so `CPU_ONLINE 0 0` in a profile
+  nobody applies made `qcctl -m balanced` refuse until the flag was given. Measured against
+  the previous build: *profile 'balanced' needs --allow-disruptive: line 77: cpu0 online = 0*,
+  naming a line in `lowpower`.
+
+  The question is per profile now — `config_disruptive()` answers it for the profile being
+  applied, and the file-wide collector is gone from `config_validate()` rather than left for
+  someone to reach for again. The predicate has one definition, so the validator and the gate
+  cannot disagree about what counts. `--verify` and `qcctl-check` attribute each one to its
+  profile, instead of printing a bare line number and leaving the reader to find out whose
+  line it was.
+
+  `qcctl-check` also said these *"require an explicit opt-in before the daemon will apply
+  them"*, which was false: `qcctld` passes no list and applies the config it is given. That is
+  the right behaviour — a daemon that refused to start for want of a flag nobody can pass it
+  would be worse than the setting — but it is not what the text claimed. It names `qcctl -m`
+  now. Measured: `-m balanced` proceeds, `-m lowpower` exits **4** naming the profile, and the
+  same with `--allow-disruptive` proceeds.
+
 - **`publish_status()` failed silently, four ways.** A path too long for its `.new` sibling,
   a `fopen` that failed, buffered writes that only surface at `fclose` — a full filesystem
   arrives there, not earlier — and a failed `rename`. Each simply returned, so a consumer saw

@@ -1027,9 +1027,7 @@ int main(int argc, char **argv)
         return 3;
     }
     {
-        const struct action *disr[32];
-        size_t ndisr = 0;
-        if (config_validate(&c, &s, err, sizeof err, disr, 32, &ndisr) < 0) {
+        if (config_validate(&c, &s, err, sizeof err) < 0) {
             fprintf(stderr, "%s: %s\n", conf, err);
             return 3;
         }
@@ -1072,10 +1070,17 @@ int main(int argc, char **argv)
             }
             printf("%s: %d profiles, validated and all applicable on this board\n",
                    conf, c.nprof);
-            for (size_t i = 0; i < ndisr; i++) {
-                char d[160];
-                printf("  disruptive: line %d: %s\n", disr[i]->line,
-                       act_describe(disr[i], d, sizeof d));
+            /* Per profile: "line 57" alone left the reader to find out whose line it was,
+             * and whether applying anything else was affected by it. */
+            for (int i = 0; i < c.nprof; i++) {
+                const struct action *pd[8];
+                size_t n = config_disruptive(&c.prof[i], pd, 8);
+
+                for (size_t j = 0; j < n; j++) {
+                    char d[160];
+                    printf("  disruptive: profile '%s' line %d: %s\n",
+                           c.prof[i].name, pd[j]->line, act_describe(pd[j], d, sizeof d));
+                }
             }
             return 0;
         }
@@ -1101,13 +1106,21 @@ int main(int argc, char **argv)
             return 3;
         }
         /* A disruptive setting is refused by default rather than attempted and
-         * hoped for. The flag makes accepting that risk a deliberate act. */
-        if (ndisr && !allow_disrupt) {
-            fprintf(stderr, "profile '%s' needs --allow-disruptive:\n", p->name);
-            for (size_t i = 0; i < ndisr; i++)
-                fprintf(stderr, "  line %d: %s\n", disr[i]->line,
-                        act_describe(disr[i], d, sizeof d));
-            return 4;
+         * hoped for. The flag makes accepting that risk a deliberate act - but only for
+         * the profile that carries one: this used to ask config_validate() for every
+         * disruptive action in the FILE, so a setting in a profile nobody applies demanded
+         * the flag from everybody. */
+        {
+            const struct action *pdisr[8];
+            size_t npdisr = config_disruptive(p, pdisr, 8);
+
+            if (npdisr && !allow_disrupt) {
+                fprintf(stderr, "profile '%s' needs --allow-disruptive:\n", p->name);
+                for (size_t i = 0; i < npdisr; i++)
+                    fprintf(stderr, "  line %d: %s\n", pdisr[i]->line,
+                            act_describe(pdisr[i], d, sizeof d));
+                return 4;
+            }
         }
 
         /* --dry-run performs no writes, so it stays usable unprivileged. A real apply

@@ -26,8 +26,6 @@ int main(int argc, char **argv)
 {
     const char *path = (argc > 1) ? argv[1] : "etc/profiles.conf";
     const char *only = (argc > 2) ? argv[2] : NULL;
-    const struct action *disr[32];
-    size_t ndisr = 0;
     struct pconfig c;
     struct surface s;
     char err[ERRLEN], line[160];
@@ -46,7 +44,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "%s:%d: %s\n", path, c.err_line, c.err);
         return 2;
     }
-    if (config_validate(&c, &s, err, sizeof err, disr, 32, &ndisr) < 0) {
+    if (config_validate(&c, &s, err, sizeof err) < 0) {
         fprintf(stderr, "%s: %s\n", path, err);
         return 3;
     }
@@ -94,12 +92,27 @@ int main(int argc, char **argv)
         printf("\n");
     }
 
-    if (ndisr) {
-        printf("DISRUPTIVE -- legal and known to work, but drastic:\n");
-        for (size_t i = 0; i < ndisr; i++)
-            printf("    line %d: %s\n", disr[i]->line,
-                   act_describe(disr[i], line, sizeof line));
-        printf("  These require an explicit opt-in before the daemon will apply them.\n\n");
+    {
+        /* Named per profile, and attributed: it is the profile carrying one that needs the
+         * flag, not the file. And it is `qcctl -m` that asks - qcctld applies the config it
+         * is given, because a daemon that refuses to start for want of a flag nobody can
+         * pass it would be worse than the setting. The old wording said the opposite. */
+        int ndisr = 0;
+
+        for (int i = 0; i < c.nprof; i++) {
+            const struct action *pd[8];
+            size_t n = config_disruptive(&c.prof[i], pd, 8);
+
+            for (size_t j = 0; j < n; j++) {
+                if (!ndisr++)
+                    printf("DISRUPTIVE -- legal and known to work, but drastic:\n");
+                printf("    profile '%s' line %d: %s\n", c.prof[i].name, pd[j]->line,
+                       act_describe(pd[j], line, sizeof line));
+            }
+        }
+        if (ndisr)
+            printf("  `qcctl -m <that profile>` refuses these without "
+                   "--allow-disruptive.\n\n");
     }
     if (nbad) {
         printf("NOT APPLICABLE on this board -- %d profile%s cannot be planned:\n",

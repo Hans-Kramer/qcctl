@@ -26,10 +26,6 @@ neither script keeps the only copy of anything in `/tmp`.
 
 ## Defects — other
 
-- **The disruptive gate is file-wide but checked per-apply.** `config_validate` collects
-  disruptive actions across every profile, so adding `CPU_ONLINE 0 0` to an *unused* profile
-  would make every `-m` demand `--allow-disruptive`.
-
 ---
 
 ## Gaps
