@@ -63,6 +63,10 @@ int  fanown_clear_point(const struct surface *s, const char *zone_name, long *ou
 int  fanown_correct_stale(const struct surface *s, const char *zone_name, long temp_mc,
                           long *out_clear_mc, int *out_state);
 
+// What the cooling device holds right now, which is not the same question as what was
+// last written to it. 0 and *out_state set, or -1.
+int  fanown_state(const struct fanown *fo, int *out_state);
+
 // Command a cooling state.
 int  fanown_set(struct fanown *fo, int state);
 

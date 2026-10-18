@@ -210,6 +210,19 @@ int fanown_correct_stale(const struct surface *s, const char *zone_name, long te
     return write_path_str(path, "0") < 0 ? -1 : 1;
 }
 
+int fanown_state(const struct fanown *fo, int *out_state)
+{
+    char path[PATH_MAXLEN];
+    uint64_t v = 0;
+
+    spath(path, sizeof path, THERMAL_DIR "/cooling_device%d/cur_state", fo->cdev_idx);
+    if (read_file_u64(path, &v) < 0)
+        return -1;
+    if (out_state)
+        *out_state = (int)v;
+    return 0;
+}
+
 int fanown_set(struct fanown *fo, int state)
 {
     char path[PATH_MAXLEN], val[16];

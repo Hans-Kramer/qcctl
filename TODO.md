@@ -36,21 +36,6 @@ neither script keeps the only copy of anything in `/tmp`.
   disruptive actions across every profile, so adding `CPU_ONLINE 0 0` to an *unused* profile
   would make every `-m` demand `--allow-disruptive`.
 
-- **Two write paths still confirm nothing.** `apply` reads its plan back now, but
-  `qcctl --reset` replays a snapshot without building a plan, so nothing *inside* qcctl
-  checks it — `uninstall.sh` verifies it externally and a bare `qcctl --reset` does not.
-  And `--fan-baseline capture` drives the fan to a state and dwells 8 s before measuring;
-  a clamped write there would make the capture record the wrong state's rpm with nothing to
-  reveal it. That one wants a confirm-before-proceeding read at its own call site rather
-  than a change to `write_path_str`, whose eleven callers mostly have nothing to judge.
-
-  The premise of the old entry was too strong and is corrected here: `config_validate`
-  rejects off-OPP frequencies (`config.c:592`), out-of-range `UCLAMP`, min above max and
-  cooling states above `max_state`, so the silent clamping it described is largely
-  unreachable through a valid config. **[measured:** `qcctl -m` with `MAX 1800000kHz` is
-  refused before any write.**]** What remains is supersession by another writer, a driver
-  that accepts and ignores, and hardware the validator does not model.
-
 ---
 
 ## Gaps

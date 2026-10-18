@@ -476,6 +476,26 @@ static int fan_baseline_capture(const struct surface *s, const char *statusf,
                     st, strerror(errno));
             goto done;
         }
+        /* An accepted write is not a held state. Ten seconds of rpm recorded against the
+         * wrong one would go into the file every later airflow judgement is measured
+         * against, and nothing afterwards could reveal it - so this is checked before the
+         * dwell rather than reported after it. */
+        {
+            int held = -1;
+
+            if (fanown_state(&fo, &held) < 0) {
+                fprintf(stderr, "fan-baseline: cannot read the fan state back at %d (%s) "
+                        "- aborting rather than record a figure nothing confirms\n",
+                        st, strerror(errno));
+                goto done;
+            }
+            if (held != st) {
+                fprintf(stderr, "fan-baseline: asked for state %d, the fan holds %d - "
+                        "aborting: the rpm would be recorded against the wrong state\n",
+                        st, held);
+                goto done;
+            }
+        }
         usleep((useconds_t)FB_DWELL_MS * 1000);
         for (int i = 0; i < FB_SAMPLES; i++) {
             long rpm = 0;
@@ -963,11 +983,33 @@ int main(int argc, char **argv)
     if (do_reset) {
         if (needs_root("--reset")) return 1;
         int n = 0;
+        struct verifyreport vr;
+
         if (state_restore(statef, err, sizeof err, &n) < 0) {
             fprintf(stderr, "reset: %s\n", err);
             return 1;
         }
         printf("restored %d values from %s\n", n, statef);
+        /* A write that was accepted is not a value that is held, and this is the one
+         * command whose whole purpose is that the board is as the snapshot found it. It
+         * reported what it had written and nothing more; uninstall.sh read the values back
+         * itself, and a bare --reset proved nothing. */
+        if (state_verify(statef, &vr) < 0) {
+            fprintf(stderr, "reset: none of the restored values could be read back, so "
+                            "nothing here is verified\n");
+            return 1;
+        }
+        if (vr.unreadable)
+            printf("%d restored value%s could not be read back\n",
+                   vr.unreadable, vr.unreadable == 1 ? "" : "s");
+        if (vr.diverged) {
+            fprintf(stderr, "reset: %d of %d restored values hold something else; first "
+                    "%s: snapshot %s, holding %s\n",
+                    vr.diverged, vr.checked, vr.path, vr.want, vr.got);
+            fprintf(stderr, "reset: the board is NOT back to what %s records\n", statef);
+            return 1;
+        }
+        printf("verified %d of %d read back as the snapshot has them\n", vr.checked, n);
         return 0;
     }
     if (do_save) {

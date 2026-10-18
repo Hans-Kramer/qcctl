@@ -828,9 +828,76 @@ int apply_verify(const struct applyctx *ctx, struct verifyreport *r)
     return 0;
 }
 
+/* One usable entry of a boot-state snapshot per call: `line` becomes the path and
+ * *out_val points at the value inside it. 1 = an entry, 0 = end of file. The skips belong
+ * here rather than in each caller - the thing that replays the snapshot and the thing that
+ * reads it back must agree about which lines count, or the verification is of a different
+ * set than the restore. */
+static int snap_next(FILE *f, char *line, size_t len, char **out_val)
+{
+    char *tab, *nl;
+
+    while (fgets(line, (int)len, f)) {
+        if (line[0] == '#')
+            continue;
+        if ((nl = strchr(line, '\n')) != NULL)
+            *nl = '\0';
+        if ((tab = strchr(line, '\t')) == NULL)
+            continue;
+        *tab = '\0';
+        if (is_governor_output(line))
+            continue;               /* see is_governor_output(): replaying this can leave
+                                       the board uncooled */
+        *out_val = tab + 1;
+        return 1;
+    }
+    return 0;
+}
+
+int state_verify(const char *path, struct verifyreport *r)
+{
+    char line[PATH_MAXLEN + NAME_LEN + 8];
+    char got[NAME_LEN];
+    char *val;
+    int candidates = 0;
+    FILE *f;
+
+    memset(r, 0, sizeof *r);
+    if ((f = fopen(path, "r")) == NULL)
+        return -1;
+    while (snap_next(f, line, sizeof line, &val)) {
+        size_t n;
+
+        candidates++;
+        if (read_file_str(line, got, sizeof got) < 0) {
+            r->unreadable++;
+            continue;
+        }
+        n = strlen(got);
+        while (n > 0 && (got[n - 1] == ' ' || got[n - 1] == '\t' || got[n - 1] == '\r'))
+            got[--n] = '\0';
+        r->checked++;
+        if (!strcmp(got, val))
+            continue;
+        if (r->diverged++ == 0) {
+            /* Explicit precisions: a snapshot line is longer than either field, and the
+             * truncation is deliberate - this is a report, not a value anyone writes back. */
+            snprintf(r->path, sizeof r->path, "%.*s", (int)sizeof r->path - 1, line);
+            snprintf(r->want, sizeof r->want, "%.*s", (int)sizeof r->want - 1, val);
+            snprintf(r->got,  sizeof r->got,  "%s", got);
+        }
+    }
+    fclose(f);
+    /* Nothing read means nothing proved, which must not read as a clean result. */
+    if (candidates > 0 && r->checked == 0)
+        return -1;
+    return 0;
+}
+
 int state_restore(const char *path, char *err, size_t errlen, int *nrestored)
 {
     char line[PATH_MAXLEN + NAME_LEN + 8];
+    char *val;
     int n = 0, failed = 0;
     FILE *f = fopen(path, "r");
 
@@ -841,21 +908,8 @@ int state_restore(const char *path, char *err, size_t errlen, int *nrestored)
     if (!f)
         PFAIL("cannot read %s: %s", path, strerror(errno));
 
-    while (fgets(line, sizeof line, f)) {
-        char *tab, *nl;
-        if (line[0] == '#')
-            continue;
-        nl = strchr(line, '\n');
-        if (nl)
-            *nl = '\0';
-        tab = strchr(line, '\t');
-        if (!tab)
-            continue;
-        *tab = '\0';
-        if (is_governor_output(line))
-            continue;               /* see is_governor_output(): replaying this can leave
-                                       the board uncooled */
-        if (write_path_str(line, tab + 1) < 0)
+    while (snap_next(f, line, sizeof line, &val)) {
+        if (write_path_str(line, val) < 0)
             failed++;
         else
             n++;

@@ -121,6 +121,12 @@ int state_save_once(const struct surface *s, const char *path, int *skipped,
                     char *err, size_t errlen);
 int state_restore(const char *path, char *err, size_t errlen, int *nrestored);
 
+/* Read the snapshot back against the live surface, after state_restore() has replayed it.
+ * Same report and the same contract as apply_verify(): divergence is a finding for the
+ * caller to judge, and -1 means nothing could be read at all. Skips the same lines the
+ * restore skips, because a verification of a different set proves nothing about it. */
+int state_verify(const char *path, struct verifyreport *r);
+
 /* The operator's profile SELECTION, boot-id tagged so it survives a daemon restart but
  * not a power cycle. Distinct from the active file, which says what is in force NOW and
  * is unlinked on exit. 0 on success, -1 if nothing could be recorded. */

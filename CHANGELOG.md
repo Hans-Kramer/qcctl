@@ -205,6 +205,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two write paths confirmed nothing.** `apply` reads its plan back; the two commands whose
+  whole purpose is a particular state did not.
+
+  `qcctl --reset` replayed the boot-state snapshot and then reported what it had *written*.
+  `uninstall.sh` read the values back itself in awk, which left a bare `qcctl --reset`
+  proving nothing — and this is the one command whose claim is that the board is as the
+  snapshot found it. It reads the snapshot back against the live surface now, names the first
+  divergence and **exits 1** when the board is not back. Same report as `apply_verify()`, with
+  the opposite verdict: after an apply a divergence is news, here it is a failure, because
+  "restored" is the claim being made. The restore and the read-back share one snapshot
+  parser, so the set that gets verified cannot drift from the set that was written.
+
+  Measured: a clean reset verifies **312 of 312**. Against a crafted snapshot asking for a
+  `scaling_min_freq` above the live `scaling_max_freq`, the write is **accepted and ignored** —
+  one of the failures the old note could only name in theory — and the reset says so and exits
+  1. The reported *holding* value can be the pre-clamp one, since the read-back is immediate:
+  it reported 902400 where the kernel settled on 1497600 a moment later. The divergence is
+  right either way.
+
+  `--fan-baseline capture` drove the fan to a state and dwelled 8 s before measuring. A write
+  accepted but not held would have put ten seconds of rpm against the **wrong state** into the
+  one file every later airflow judgement is measured against, with nothing afterwards able to
+  reveal it. It reads the state back before the dwell now and aborts rather than record a
+  figure nothing confirms. A clean capture records every state exactly as before.
+
 - **An install that died halfway could leave files no uninstall would ever find.** The
   manifest is the only record of what is on disk, and step 2 emptied it before step 3 started
   re-recording — so between those two points every path the previous install had created was
