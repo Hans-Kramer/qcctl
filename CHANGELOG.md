@@ -37,6 +37,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the normalisations this would otherwise catch are prevented before any write. This is
   a backstop for what validation cannot model.
 
+- **`qcctl-check` answers `--help`, and the installer tests it like every other binary.** It
+  read `--help` as a config path, failed to parse a file by that name and exited 2 — so
+  `install.sh` excluded it from the "does this binary actually run here" check, leaving the
+  one binary the install trusts to validate the config as the only one not tested before it
+  was relied on. It prints usage on stdout and exits 0 now, and an unknown option goes to
+  stderr with exit 2 instead of being read as a filename.
+
+  The exclusion is gone from the installer, and CI asserts that every binary answers `--help`
+  with 0 on every push — a regression there used to surface as a failed install on the board,
+  after the files had been copied. The usage text carries the exit codes it already had: 0
+  valid and applicable here, 2 does not parse, 3 parses but is not usable, 4 the file is fine
+  and this kernel does not expose something it names.
+
+  Measured on the board through a real `--upgrade`: the previous binary exits 2 for `--help`,
+  the installed one exits 0 and the installer's own check covers it, an unknown option exits
+  2, and a real config still exits 0 with the per-profile report unchanged.
+
 - **`surface-dump` ships, as `qcctl-surface-dump`.** It was built, staged and
   architecture-checked but never installed, so the one tool that answers "what does `qcctl`
   think this board looks like" existed only in a build tree — and it is a diagnostic an

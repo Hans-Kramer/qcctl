@@ -60,6 +60,18 @@ jobs:
             echo "ok  $s --help"
           done
 
+      - name: Every binary answers --help with 0
+        # The installer refuses to install a binary that cannot run on the board, and that
+        # test is `--help` exiting 0. One that stops answering fails the install, on the
+        # board, after the files are already copied. This fails the push instead.
+        run: |
+          make all >/dev/null
+          for b in qcctl qcctld qcctl-check qcctl-surface-dump; do
+            ./build/$b --help >/dev/null \
+              || { echo "::error file=src::$b --help did not exit 0"; exit 1; }
+            echo "ok  $b --help"
+          done
+
       - name: Every OWNED path is known to the uninstaller
         # install.sh records what it creates in a manifest, but --force exists for when no
         # manifest survives, and uninstall.sh then falls back to a hand-written list. A path

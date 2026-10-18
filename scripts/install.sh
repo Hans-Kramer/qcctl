@@ -117,11 +117,15 @@ for b in qcctld qcctl qcstats qcctl-surface-dump qcctl-check; do
         die "wrong-architecture binary in the staging directory. Rebuild with 'make stage'."
     fi
 done
-# Execution, now that the architecture is known good: --help exits 0 on all four, so a
+# Execution, now that the architecture is known good: --help exits 0 on all five, so a
 # failure here is a real one (a missing shared library, a truncated copy) rather than the
-# unconditional success the previous `|| true` chain always reported. qcctl-check is absent
-# from this list on purpose: it exits 2 for --help, because it wants a config path.
-for b in qcctld qcctl qcstats qcctl-surface-dump; do
+# unconditional success the previous `|| true` chain always reported. qcctl-check was
+# excluded from this because it exited 2 for --help; it answers properly now, so the one
+# binary this install trusts to validate the config is tested like the rest of them.
+for b in qcctld qcctl qcstats qcctl-surface-dump qcctl-check; do
+    # Only qcctl-check may legitimately be absent: step 1 requires the others outright, and
+    # put() installs this one only when it was staged.
+    [ -f "$SRC/$b" ] || continue
     "$SRC/$b" --help >/dev/null 2>&1 || die "$b is the right architecture but will not run"
 done
 note "   binaries: all e_machine=0x$host_em and executable here"

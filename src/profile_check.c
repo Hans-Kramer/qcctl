@@ -22,6 +22,27 @@
 #define QCCTL_VERSION "unknown"
 #endif
 
+static void usage(FILE *out)
+{
+    fprintf(out,
+"usage: qcctl-check [<profiles.conf>] [<profile>]\n"
+"\n"
+"Validates a profile config against what this board actually exposes, and plans\n"
+"every profile against it. Writes nothing. Naming a profile, by name or id, limits\n"
+"the report to that one. The default path is etc/profiles.conf, for running it from\n"
+"a source tree.\n"
+"\n"
+"  -h, --help            this text\n"
+"  -V, --version\n"
+"\n"
+"  QCCTL_SYSROOT=<dir>   read a captured tree instead of this machine\n"
+"\n"
+"Exit: 0 it parses, validates, and every profile is applicable here\n"
+"      2 the file does not parse\n"
+"      3 it parses but is not a usable config - a bad setting, or no DEFAULT profile\n"
+"      4 the file is fine; this kernel does not expose something it names\n");
+}
+
 int main(int argc, char **argv)
 {
     const char *path = (argc > 1) ? argv[1] : "etc/profiles.conf";
@@ -32,9 +53,23 @@ int main(int argc, char **argv)
     char planerr[MAX_PROFILES][ERRLEN];
     int nbad = 0;
 
-    if (argc > 1 && (!strcmp(argv[1], "-V") || !strcmp(argv[1], "--version"))) {
-        printf("qcctl-check %s\n", QCCTL_VERSION);
-        return 0;
+    if (argc > 1) {
+        if (!strcmp(argv[1], "-V") || !strcmp(argv[1], "--version")) {
+            printf("qcctl-check %s\n", QCCTL_VERSION);
+            return 0;
+        }
+        if (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help")) {
+            usage(stdout);
+            return 0;
+        }
+        /* An option this does not know was taken as a config PATH, so --help opened a file
+         * called "--help", failed to parse it and exited 2. The installer excluded this
+         * binary from its "does it run here" test for exactly that reason. */
+        if (argv[1][0] == '-') {
+            fprintf(stderr, "qcctl-check: unknown option '%s'\n", argv[1]);
+            usage(stderr);
+            return 2;
+        }
     }
 
     io_set_sysroot(getenv(ENV_SYSROOT));

@@ -36,10 +36,6 @@ neither script keeps the only copy of anything in `/tmp`.
   already carry real modes and owners for a copied tree, so a suite would need no board and
   no root. The hook is built and unused.
 
-- **`qcctl-check` has no `--help`** and exits 2 for it, which `install.sh` works around by
-  excluding it from the binary smoke test. A broken `qcctl-check` is therefore not detected
-  before it is trusted to gate the install.
-
 - **One path nothing verifies:** suspend/resume — the board resumes from neither `freeze`
   nor `deep`, so the hook cannot be exercised here, which the unit itself states. The
   `SIGKILL` fan-release backstop is covered now: the script was run on the board in the
