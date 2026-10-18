@@ -183,11 +183,18 @@ int fanown_correct_stale(const struct surface *s, const char *zone_name, long te
                          long *out_clear_mc, int *out_state)
 {
     const struct zone *z = surface_zone(s, zone_name);
-    char path[PATH_MAXLEN];
+    char path[PATH_MAXLEN], mode[NAME_LEN];
     uint64_t state = 0;
     long clear_mc = 0;
 
     if (!z || z->nbound != 1)
+        return 0;
+    /* The zone's mode is the lock, and this corrects a zone the KERNEL holds. Disabled
+     * means someone else has taken it - a --fan-baseline capture, or --cool-max - and the
+     * fan is theirs to drive until they hand it back. Measured: without this, a capture
+     * lost a state's rpm to a correction landing mid-measurement. */
+    spath(path, sizeof path, THERMAL_DIR "/thermal_zone%d/mode", z->idx);
+    if (read_file_str(path, mode, sizeof mode) < 0 || strcmp(mode, "enabled") != 0)
         return 0;
     if (!fanown_clear_point(s, zone_name, &clear_mc) || temp_mc >= clear_mc)
         return 0;

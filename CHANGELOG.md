@@ -265,7 +265,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   something else is driving the fan and stops, and the count is forgotten after an hour
   without one — so "three strikes" means three in quick succession rather than three in a
   fortnight of uptime. It acts only where the zone drives exactly one cooling device, because
-  with several, which one is the fan is a guess.
+  with several, which one is the fan is a guess. And only on a zone the kernel actually
+  holds: the zone's `mode` is the lock, so while `--fan-baseline capture` or `--cool-max`
+  has it, the fan is theirs until they hand it back.
 
   Measured on the board: a `FAILSAFE full` leftover is cleaned up by the next daemon,
   state 9 → 0 at 34.9 °C; hand-written states are corrected at 33–35 °C and left alone at
