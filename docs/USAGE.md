@@ -562,11 +562,11 @@ Every binary reports its own version, so an upgrade can be confirmed rather than
 
 ```console
 $ qcctl -V
-qcctl 0.1.0-pre
+qcctl 0.1.0
 $ qcctld -V
-qcctld 0.1.0-pre
+qcctld 0.1.0
 $ qcstats -V
-qcstats 0.1.0-pre
+qcstats 0.1.0
 json-schema 1
 ```
 

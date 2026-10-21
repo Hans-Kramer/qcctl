@@ -16,7 +16,7 @@ LDFLAGS ?=
 #   VERSION ?= $(shell git describe --tags --dirty 2>/dev/null || echo 0.1.0-pre)
 # which is the point of having it here rather than in a header - the build knows what the
 # source cannot.
-VERSION ?= 0.1.0-pre
+VERSION ?= 0.1.0
 CFLAGS  += -DQCCTL_VERSION=\"$(VERSION)\"
 
 # Every build artifact lands under $(B); nothing is written to the source tree.
@@ -62,6 +62,18 @@ $(BIN4): $(B)/src/daemon.o $(OBJ_COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # mkdir per object: the build tree mirrors the source tree.
+# The version is baked into every object through CFLAGS, and make does not track CFLAGS: a
+# bumped VERSION with existing objects produced a binary that REPORTED THE OLD ONE. `make
+# cross` cleans first, so the staged board build was never exposed to it; a native build was,
+# and a release is defined by exactly this string. Depending on the Makefile is cruder than a
+# version stamp file and needs no new machinery: editing it rebuilds thirteen small objects.
+# EVERY object, not just the common ones: the four programs' mains are deliberately outside
+# OBJ_COMMON, and -V prints from main.c - so depending on OBJ_COMMON alone left exactly the
+# object that carries the version string stale. Caught by bumping VERSION and watching the
+# binary still report the old one.
+$(OBJ_COMMON) $(B)/src/main.o $(B)/src/daemon.o $(B)/src/surface_dump.o \
+    $(B)/src/profile_check.o $(TESTS:%=%.o): Makefile
+
 $(B)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<

@@ -3,7 +3,8 @@
 # qcctl
 
 > [!CAUTION]
-> **Pre-release: `v0.1.0-pre`. No release has been published.**
+> **`v0.1.0` — the first release.** It writes to CPU, GPU and thermal control
+> points as root, on one board and nothing else.
 >
 > `qcctl` and its companion [`qcstats`](https://github.com/Hans-Kramer/qcstats)
 > target **one board** — the Arduino Ventuno Q (QCS8275). Nothing else is
@@ -25,7 +26,12 @@
 > removal returns the board to stock, and after a power cycle `policy2` comes up
 > `schedutil` rather than the vendor's `ondemand`. **Not verified:
 > suspend/resume — this board resumes from neither sleep state.** Interfaces and
-> config syntax may change without notice before `0.1.0`. Known gaps are in
+> **What `0.1.0` promises, and what it does not.** Removal is the promise:
+> `uninstall.sh` returns the board to what the boot-state snapshot recorded, and
+> `--reset` verifies every value it restores rather than reporting what it wrote.
+> The config syntax is **not** stable — it is `0.x` in the ordinary sense and may
+> change in a minor release, which is why `qcctl --verify` exists and why the
+> installer refuses to overwrite a config you have edited. Known gaps are in
 > [`TODO.md`](TODO.md).
 >
 > Fit for a board you are willing to experiment with. Not for one you depend on.
@@ -316,9 +322,33 @@ state. See [`TODO.md`](TODO.md) for what the suite still does not cover.
 
 - **No GUI.** Everything it needs exists — the status file, the control socket, a polkit action
   and `--json` output — but it will live in its own repository.
-- **Suspend is untestable here.** `qcctl-resume.service` ships and re-asserts the active
-  profile on resume, but this board does not resume from either `freeze` or `deep`; each attempt
-  needed a physical power cycle. The hook is unverified and that is stated rather than hidden.
+- **Suspend is untestable here, and there is no pre-sleep hook.** Two separate facts, both
+  measured.
+
+  This board comes back from nothing once suspended — not a keyboard event, not a mouse click,
+  not the on-board `USER` button. Only a hard power cycle recovers it, so
+  `qcctl-resume.service` ships and has never run. Its own comment says so. One untried avenue:
+  the PMIC's RTC is already an enabled wakeup source with a `wakealarm`, so `rtcwake` may wake
+  what the input devices cannot — it needs no backup battery, since the alarm only has to fire
+  while the board is powered.
+
+  And nothing releases the fan *before* sleep. The release path exists and is hardware-verified
+  — `ExecStopPost=qcctl-fan-release` in the unit — but systemd does not stop services on
+  suspend, so with a `FAN MODE curve` or `target` profile in force the zone stays `disabled`
+  and the fan stays where the strategy left it. On a board that resumes, that is seconds of
+  staleness; here it is until the power is pulled. A profile with no fan strategy, which
+  includes the shipped `balanced`, is unaffected: the kernel holds the fan throughout.
+
+  Two fixes were considered and neither shipped in `0.1.0`. A oneshot unit ordered
+  `Before=sleep.target` would stop the daemon, letting the existing release path run — twelve
+  lines, no new code, and systemd waits for it. Teaching the daemon logind's `PrepareForSleep`
+  would be better still, keeping it alive across sleep with its drift baseline and airflow
+  history intact; it costs a `libsystemd` link, which is no new *runtime* requirement for a
+  project that already ships units and shells out to `systemctl`, but does mean an aarch64
+  `libsystemd` for the cross build that the gate performs on every push. The reason for
+  shipping neither is the same reason the rest of this suite exists: the resume half of either
+  one cannot be demonstrated on hardware that does not resume, and this project does not ship
+  behaviour it cannot show working.
 - **DDR frequency cannot be controlled.** `ddr_frequency_mhz` is write-only and sits on an AOSS
   QMP channel where every write times out. Residency *measurement* is possible but belongs to
   `qcstats`, since there is nothing here to act on.

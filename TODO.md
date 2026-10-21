@@ -79,6 +79,16 @@ neither script keeps the only copy of anything in `/tmp`.
   reacting to a real temperature, a written `cur_state` persisting because the zone has no
   `polling_delay`, and what the fan physically does.
 
+- **No pre-sleep hook, by decision.** Nothing releases the fan before the system sleeps:
+  systemd does not stop services on suspend, so a `curve` or `target` profile leaves the zone
+  `disabled` and the fan where the strategy left it. The release path itself exists and is
+  verified (`ExecStopPost=qcctl-fan-release`); only the trigger is missing. A oneshot ordered
+  `Before=sleep.target` is twelve lines and no new code; logind's `PrepareForSleep` is better
+  and costs an aarch64 `libsystemd` for the gate's cross build. **Neither shipped in 0.1.0**
+  because the resume half of either cannot be demonstrated on a board that does not resume —
+  see the README's limitations. Revisit when it does, or when `rtcwake` is shown to wake it.
+  **[measured]**
+
 - **One path nothing verifies:** suspend/resume — the board resumes from neither `freeze`
   nor `deep`, so the hook cannot be exercised here, which the unit itself states. The
   `SIGKILL` fan-release backstop is covered now: the script was run on the board in the
