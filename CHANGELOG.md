@@ -543,6 +543,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The gate's first run failed, in the gate rather than the code.** Three faults, all mine,
+  all found by running it:
+
+  The `check` and `aarch64` jobs asserted that no test may report SKIPPED. One legitimately
+  does: the installer test stages a NATIVE build, which needs the sibling repository, and
+  those jobs check out one repo. The `contract` job has both and runs it for real - its own
+  comment said so - so the assertion belonged there and not everywhere. It now names the one
+  skip it will accept and fails on any other, which is the signal without the false alarm.
+
+  The `contract` job built `tests` and then ran the shell suite, which drives the real
+  binaries through argv - and `tests` builds only the test programs. So two shell tests exited
+  "not built" and failed the job with no annotation saying why. It builds `all` too now. The
+  same dependency is already in `make test`; running the halves separately is what skipped it.
+
+  And the runner label is pinned to `ubuntu-24.04`. It was `ubuntu-latest`, on the reasoning
+  that this is Ubuntu 24.04 like the board - which stopped being true two days before the
+  first run, when GitHub began migrating the label to Ubuntu 26. Matching the board's
+  userspace is the whole reason the runner choice matters: these scripts are POSIX shell run
+  by dash and lean on awk, sed and od. `actions/checkout` moves to v5 in the same change,
+  which is what the Node 20 deprecation warnings were about.
+
 - **A fan TARGET with no `MAX_STATE` was validated against nothing.** `fanconfig_validate`
   skipped its ceiling check entirely when `MAX_STATE` was absent, and `target_next()` then
   bounded at a literal 10 — this board's FAN maximum, and wrong for every smaller cooling

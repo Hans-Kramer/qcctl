@@ -18,9 +18,14 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # PINNED, not `ubuntu-latest`. The board runs Ubuntu 24.04, and matching it is the
+    # point: the scripts here are POSIX shell run by dash and lean on awk, sed and od, so
+    # the runner's userspace is part of what is being tested. GitHub began migrating
+    # `ubuntu-latest` to Ubuntu 26 on 2026-10-19, which would have moved the gate off the
+    # board's version silently.
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install toolchains
         run: |
@@ -50,10 +55,15 @@ jobs:
         run: |
           out=$(make test 2>&1) || { printf '%s\n' "$out"; exit 1; }
           printf '%s\n' "$out"
-          # A shell test that skips is a test that is not running. On a runner there is
-          # nothing to be missing, so a skip is a fault, not a notice.
-          if printf '%s\n' "$out" | grep -q SKIPPED; then
-            echo "::error::a test skipped in CI, where it has to run"
+          # A test that skips is a test that is not running, so a skip here has to be one we
+          # can name. Exactly one can be: tests/sh/t_install.sh stages a NATIVE build, which
+          # needs the sibling qcstats, and this job checks out qcctl alone - the `contract`
+          # job has both repos and runs it for real, which is why a skip is fatal there.
+          # Anything else skipping is a fault.
+          unexpected=$(printf '%s\n' "$out" | grep SKIPPED | grep -cv 't_install') || true
+          if [ "${unexpected:-0}" != 0 ]; then
+            printf '%s\n' "$out" | grep SKIPPED | grep -v 't_install'
+            echo "::error::a test skipped in CI for a reason this job does not expect"
             exit 1
           fi
 
@@ -156,15 +166,15 @@ jobs:
     # `make stage` refuses to run until ../qcstats/qcstats exists and is an
     # aarch64 binary. Kept as its own job so a failure here is legible as a
     # packaging failure rather than a compilation one.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out qcctl
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: qcctl
 
       - name: Check out the sibling qcstats
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: Hans-Kramer/qcstats
           path: qcstats
@@ -196,7 +206,7 @@ jobs:
     # SKIPPED - native already IS that architecture, which the last step asserts.
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install toolchains
         run: |
@@ -210,10 +220,15 @@ jobs:
         run: |
           out=$(make test 2>&1) || { printf '%s\n' "$out"; exit 1; }
           printf '%s\n' "$out"
-          # A shell test that skips is a test that is not running. On a runner there is
-          # nothing to be missing, so a skip is a fault, not a notice.
-          if printf '%s\n' "$out" | grep -q SKIPPED; then
-            echo "::error::a test skipped in CI, where it has to run"
+          # A test that skips is a test that is not running, so a skip here has to be one we
+          # can name. Exactly one can be: tests/sh/t_install.sh stages a NATIVE build, which
+          # needs the sibling qcstats, and this job checks out qcctl alone - the `contract`
+          # job has both repos and runs it for real, which is why a skip is fatal there.
+          # Anything else skipping is a fault.
+          unexpected=$(printf '%s\n' "$out" | grep SKIPPED | grep -cv 't_install') || true
+          if [ "${unexpected:-0}" != 0 ]; then
+            printf '%s\n' "$out" | grep SKIPPED | grep -v 't_install'
+            echo "::error::a test skipped in CI for a reason this job does not expect"
             exit 1
           fi
 
@@ -234,15 +249,15 @@ jobs:
     #
     # Both are built NATIVELY here: the stage job cross-builds for the board, and a runner
     # cannot execute that.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out qcctl
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: qcctl
 
       - name: Check out the sibling qcstats
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: Hans-Kramer/qcstats
           path: qcstats
@@ -278,7 +293,11 @@ jobs:
         # Twice over: the committed copy proves the parser handles the documented shape, the
         # freshly generated line is what catches the producer drifting away from it.
         run: |
-          make -C qcctl tests
+          # `all` as well as `tests`: the shell suite below drives the real binaries through
+          # argv, and `make tests` builds only the test programs - so t_cli.sh and
+          # t_daemon.sh exited 2 with "not built" and failed this job with no annotation to
+          # say why. `make test` has this dependency; running the halves separately skipped it.
+          make -C qcctl all tests
           cd qcctl
           ./build/tests/t_contract
           ./build/tests/t_contract /tmp/live.ndjson

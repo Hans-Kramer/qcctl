@@ -25,9 +25,9 @@ permissions:
 
 jobs:
   audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: What the archive and the image server say
         # The logic lives in tests/platform-audit.sh rather than in this file, so it can be
