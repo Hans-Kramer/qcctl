@@ -496,6 +496,16 @@ int fanconfig_validate(const struct fanconfig *fc, const struct surface *s,
         if (cd->state_ok && t->max_state && (uint64_t)t->max_state > cd->max_state)
             VF("target '%s': MAX_STATE %d exceeds %s max_state %llu",
                t->name, t->max_state, t->cdev, (unsigned long long)cd->max_state);
+        /* MAX_STATE UNSET IS NOT UNBOUNDED. target_next() then bounds at TARGET_TOP_DEFAULT,
+         * which is right for this board's fan and wrong for every smaller cooling device on
+         * it - and the check above skipped entirely when MAX_STATE was absent, so a target
+         * on a four-state device was validated and then commanded states it cannot take.
+         * Asking the operator for an explicit ceiling is better than picking one for them:
+         * the number decides how hard the device is driven. */
+        if (cd->state_ok && !t->max_state && cd->max_state < TARGET_TOP_DEFAULT)
+            VF("target '%s': %s has only %llu states, fewer than the default ceiling of %d; "
+               "set MAX_STATE explicitly", t->name, t->cdev,
+               (unsigned long long)cd->max_state, TARGET_TOP_DEFAULT);
     }
     return 0;
 }
@@ -581,7 +591,7 @@ int curve_next(const struct curve *c, long temp_mc, int cur)
 int target_next(const struct target *t, struct target_state *st,
                 long temp_mc, int cur, long now_ms)
 {
-    int top = t->max_state ? t->max_state : 10;
+    int top = t->max_state ? t->max_state : TARGET_TOP_DEFAULT;
     long err = temp_mc - t->target_mc;
     long dtemp;
     int rising, falling, next = cur;

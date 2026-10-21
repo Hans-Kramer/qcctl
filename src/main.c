@@ -276,6 +276,12 @@ static int cool_max_via_daemon(const char *sockpath)
         close(fd);
         return 1;
     }
+    /* LINE-BUFFERED for the duration. stdout to a file or a pipe is block-buffered, so
+     * everything below - including the fact that the hold is active - arrived only when the
+     * process exited. For a command whose whole purpose is to report a hold WHILE it lasts,
+     * that is backwards; on a terminal it was never visible because a tty is line-buffered
+     * already. */
+    setvbuf(stdout, NULL, _IOLBF, 0);
     printf("cool-max: qcctld is cooling at maximum. No privilege needed - the\n");
     printf("cool-max: daemon does the work, and it can only ever RAISE cooling.\n");
     printf("cool-max: stop with Ctrl-C; the hold ends when this process exits, however\n");
@@ -881,6 +887,17 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    /* --query REPORTS; the others CHANGE something. Asked for both, this used to report and
+     * exit 0 with the change silently dropped - a caller scripting an apply saw success and
+     * no effect. Two answers to "what should happen" is the same conflict --cool-max refuses
+     * above, so it is refused the same way rather than resolved by dispatch order. */
+    if (do_query && (mode || do_reset || do_save || do_reapply)) {
+        fprintf(stderr, "--query reports the current state; it cannot be combined with "
+                        "-m, --reset, --save-state or --reapply\n");
+        fprintf(stderr, "  run the change, then --query, if you want both\n");
+        return 2;
+    }
+
     io_set_sysroot(getenv(ENV_SYSROOT));
     surface_discover(&s);
 
@@ -968,7 +985,9 @@ int main(int argc, char **argv)
             return 0;
         }
         mode = active_name;
-        printf("re-applying the recorded profile '%s'\n", active_name);
+        /* Announced where the apply happens, not here: this printf used to run before
+         * dispatch, so --reapply --query said "re-applying" and then only reported. The
+         * combination is refused now, but the message still belongs with the action. */
     }
 
     if (!do_query && !do_list && !do_reset && !do_save && !do_verify && !mode) {
@@ -1100,6 +1119,9 @@ int main(int argc, char **argv)
         const struct profile *p = config_find(&c, mode);
         struct applyctx ctx;
         char d[160];
+
+        if (do_reapply)
+            printf("re-applying the recorded profile '%s'\n", mode);
 
         if (!p) {
             fprintf(stderr, "no profile '%s' in %s\n", mode, conf);

@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: Copyright (c) 2026 Hans Kramer
+# SPDX-FileContributor: Claude Opus 5 (Anthropic), paired on the behavioural suite
+#
+# Does the platform still provide what this project is built on?
+#
+# Deliberately NOT part of the push gate. It fetches from the Ubuntu archive and from
+# Canonical's image server, and a network hiccup must not turn a push red. The question it
+# answers is a function of time rather than of a commit: a kernel lands in proposed, an image
+# is published, and nothing in either repository changes.
+#
+# A config flag this project depends on going missing FAILS. A newer image is a warning,
+# because a publication is news and not a fault.
+
+name: platform
+
+on:
+  schedule:
+    # Mondays, early. Weekly is as often as this moves: two kernels and two images exist.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: What the archive and the image server say
+        # The logic lives in tests/platform-audit.sh rather than in this file, so it can be
+        # read, run and debugged by hand: `sh tests/platform-audit.sh`.
+        run: sh tests/platform-audit.sh

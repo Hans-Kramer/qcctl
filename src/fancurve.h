@@ -15,6 +15,11 @@
 #define MAX_TARGETS     8
 #define MAX_POINTS      16
 #define CURVE_ERRLEN    256
+/* The ceiling a TARGET uses when MAX_STATE is not given. It is this board's fan maximum,
+ * and fanconfig_validate refuses a target on a device with fewer states rather than
+ * pretending this number describes it. */
+#define TARGET_TOP_DEFAULT  10
+
 #define SAFETY_CEILING_MC   85000
 #define SAFETY_RELEASE_MC    3000   // hysteresis, or it flips at the ceiling
 #define REACHABLE_LOW_MC    30000

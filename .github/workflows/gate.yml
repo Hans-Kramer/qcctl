@@ -41,7 +41,21 @@ jobs:
       - name: make check
         # gcc, then clang, then the aarch64 cross build, all at
         # -Wall -Wextra -Werror -O2. Leaves build/ native and populated.
+        # Each of those passes now builds the tests too, so test code holds the same bar.
         run: make check
+
+      - name: make test
+        # `check` compiles; this runs code. Each test file fails if any check failed OR if
+        # it checked nothing at all - a suite that cannot fail is not a gate.
+        run: |
+          out=$(make test 2>&1) || { printf '%s\n' "$out"; exit 1; }
+          printf '%s\n' "$out"
+          # A shell test that skips is a test that is not running. On a runner there is
+          # nothing to be missing, so a skip is a fault, not a notice.
+          if printf '%s\n' "$out" | grep -q SKIPPED; then
+            echo "::error::a test skipped in CI, where it has to run"
+            exit 1
+          fi
 
       - name: Shell scripts parse
         run: |
@@ -128,6 +142,9 @@ jobs:
           for f in $(git ls-files); do
             case "$f" in
               LICENSE|LICENSES/*) continue ;;
+              # Captured data: sysfs values and one qcstats stream, both machine output
+              # rather than authored content. tests/fixtures/*/README.md declares each tree.
+              tests/fixtures/*/*) continue ;;
             esac
             grep -qI "SPDX-License-Identifier:" "$f" 2>/dev/null \
               || { echo "::error file=$f::no SPDX-License-Identifier"; rc=1; }
@@ -168,3 +185,114 @@ jobs:
 
       - name: Report what was staged
         run: ls -l /tmp/qcctl-stage
+
+  aarch64:
+    # The board's architecture. Until now it was compiled and never executed: char is
+    # unsigned on aarch64 and signed on x86, and the suite is what makes that difference
+    # visible. GitHub's arm64 Linux runners are free for public repositories; if this job
+    # cannot find a runner, that is what the first run will say.
+    #
+    # No cross toolchain is installed here, so `make check`'s aarch64 pass reports itself
+    # SKIPPED - native already IS that architecture, which the last step asserts.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchains
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc clang
+
+      - name: make check
+        run: make check
+
+      - name: make test
+        run: |
+          out=$(make test 2>&1) || { printf '%s\n' "$out"; exit 1; }
+          printf '%s\n' "$out"
+          # A shell test that skips is a test that is not running. On a runner there is
+          # nothing to be missing, so a skip is a fault, not a notice.
+          if printf '%s\n' "$out" | grep -q SKIPPED; then
+            echo "::error::a test skipped in CI, where it has to run"
+            exit 1
+          fi
+
+      - name: Assert these binaries really are aarch64
+        run: |
+          for b in build/qcctl build/qcctld build/qcctl-check build/qcctl-surface-dump; do
+            got=$(od -An -tx1 -j18 -N1 "$b" | tr -d ' \n')
+            [ "$got" = "b7" ] \
+              || { echo "::error file=$b::e_machine 0x$got, not aarch64"; exit 1; }
+            echo "ok  $b e_machine=0x$got"
+          done
+
+  contract:
+    # The one thing neither repository can test alone. qcctl parses qcstats' NDJSON with
+    # strstr, so a renamed field makes this consumer read "not measured" forever - a valid
+    # answer in that schema, and therefore silent. And the schema version is two constants
+    # in two repositories, kept equal by hand with no build-time check.
+    #
+    # Both are built NATIVELY here: the stage job cross-builds for the board, and a runner
+    # cannot execute that.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out qcctl
+        uses: actions/checkout@v4
+        with:
+          path: qcctl
+
+      - name: Check out the sibling qcstats
+        uses: actions/checkout@v4
+        with:
+          repository: Hans-Kramer/qcstats
+          path: qcstats
+
+      - name: Install toolchains
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc
+
+      - name: The two schema constants must agree
+        run: |
+          a=$(sed -n 's/^#define QCSTATS_JSON_SCHEMA  *\([0-9]*\).*/\1/p' \
+                qcstats/src/qcstats.h)
+          b=$(sed -n 's/^#define STATS_SCHEMA_V  *\([0-9]*\).*/\1/p' qcctl/src/stats.h)
+          echo "qcstats emits v${a:-?}, qcctl reads v${b:-?}"
+          [ -n "$a" ] && [ -n "$b" ] \
+            || { echo "::error::a schema constant could not be extracted - the check is"\
+                      " broken, not the code"; exit 1; }
+          [ "$a" = "$b" ] \
+            || { echo "::error::schema mismatch: qcstats emits $a, qcctl reads $b. Every"\
+                      " line of another version counts as NO READING."; exit 1; }
+
+      - name: Generate a stream from qcstats' own fixture
+        # No board: the producer runs against its committed capture.
+        run: |
+          make -C qcstats all
+          fx=$(ls -d qcstats/tests/fixtures/monza-* | head -1)
+          echo "fixture: $fx"
+          QCSTATS_SYSROOT="$fx" qcstats/qcstats --json --count 2 > /tmp/live.ndjson
+          head -c 100 /tmp/live.ndjson; echo
+
+      - name: qcctl parses the stream it was just handed
+        # Twice over: the committed copy proves the parser handles the documented shape, the
+        # freshly generated line is what catches the producer drifting away from it.
+        run: |
+          make -C qcctl tests
+          cd qcctl
+          ./build/tests/t_contract
+          ./build/tests/t_contract /tmp/live.ndjson
+
+      - name: The shell suite, with the installer in a container
+        # This job is where the shell tests belong: tests/sh/t_install.sh stages a NATIVE
+        # build, which needs the sibling qcstats, and then installs as real root inside a
+        # disposable container. In the `check` job - qcctl alone - it skips for want of that
+        # sibling, which is why skipping is a failure HERE.
+        run: |
+          cd qcctl
+          out=$(sh tests/sh/run.sh 2>&1) || { printf '%s\n' "$out"; exit 1; }
+          printf '%s\n' "$out"
+          if printf '%s\n' "$out" | grep -q SKIPPED; then
+            echo "::error::a shell test skipped in CI, where it has to run"
+            exit 1
+          fi

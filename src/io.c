@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <pwd.h>
 
 const char *sysroot = "";
 
@@ -183,15 +184,32 @@ int path_owner(const char *dir, const char *attr, char *out, size_t len)
 {
     char path[PATH_MAXLEN];
     const struct ment *m;
+    struct stat st;
 
     if (len)
         out[0] = '\0';
     if (join(path, sizeof path, dir, attr) < 0)
         return -1;
     m = manifest_find(path);
-    if (!m)
+    if (m) {
+        snprintf(out, len, "%s", m->owner);    /* fixture: the board's owner, not ours */
+        return 0;
+    }
+    /* On a live system there is no manifest, and this used to stop here - so
+     * qcctl-surface-dump's owner column read `?` on every board and was only ever
+     * populated in a fixture, which is the one place it does not matter. Resolve it the
+     * way `ls -l` does, and fall back to the numeric uid when there is no passwd entry,
+     * because a number is still an answer. */
+    if (stat(path, &st) != 0)
         return -1;
-    snprintf(out, len, "%s", m->owner);
+    {
+        const struct passwd *pw = getpwuid(st.st_uid);
+
+        if (pw && pw->pw_name)
+            snprintf(out, len, "%s", pw->pw_name);
+        else
+            snprintf(out, len, "%u", (unsigned)st.st_uid);
+    }
     return 0;
 }
 

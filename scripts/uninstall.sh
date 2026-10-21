@@ -46,11 +46,14 @@ STATEF=/var/lib/qcctl/boot-state   # what --reset restores from; step 5 removes 
 FANBASE=/var/lib/qcctl/fan-baseline  # measured on this board; kept unless --purge
 VENDOR=/etc/sysfs.d/50-dragonwing-defaults.conf
 FANZONE=cpuss-0-0-thermal
+# Where this script LOOKS. QCCTL_SYSROOT relocates it onto a captured tree so the removal
+# bookkeeping can be exercised off a board; what it REMOVES stays absolute.
+SYSFS="${QCCTL_SYSROOT:-}/sys"
 
 # Resolve the fan's zone BY NAME, never by index - same rule the rest of the project
 # follows. Falls back to empty, which the step-2 check reports rather than ignores.
 ZONE=
-for z in /sys/class/thermal/thermal_zone*; do
+for z in "$SYSFS"/class/thermal/thermal_zone*; do
     [ -r "$z/type" ] || continue
     [ "$(cat "$z/type" 2>/dev/null)" = "$FANZONE" ] && { ZONE="$z/mode"; break; }
 done
@@ -290,6 +293,11 @@ BASESTATE=
 if [ -f "$FANBASE" ]; then
     if [ "$PURGE" = 1 ]; then
         note "   purging $FANBASE - a reinstall will need a fresh capture"
+        # Removed HERE rather than left to the OWNED sweep over /var/lib/qcctl. A second
+        # uninstall - the one an operator runs when they later decide to purge - works from
+        # the kept-config record, which holds CONFIG lines only, so that sweep never happens
+        # and this message used to be a claim nothing carried out.
+        run rm -f "$FANBASE"
     else
         note "   keeping $FANBASE (--purge removes it)"
         [ "$DRY" = 0 ] && { BASESTATE=$(mktemp) && cat "$FANBASE" > "$BASESTATE"; }
@@ -430,7 +438,7 @@ if [ -f "$VENDOR" ]; then
     fi
 fi
 cd_state=
-for c in /sys/class/thermal/cooling_device*; do
+for c in "$SYSFS"/class/thermal/cooling_device*; do
     [ "$(cat "$c/type" 2>/dev/null)" = emc2305_fan ] && cd_state=$(cat "$c/cur_state" 2>/dev/null)
 done
 note "   zone mode: $(cat "$ZONE" 2>/dev/null)   fan state: ${cd_state:-unknown}"

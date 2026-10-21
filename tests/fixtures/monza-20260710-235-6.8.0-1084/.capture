@@ -1,0 +1,10 @@
+# qcctl fixture capture
+captured   2026-10-18T17:17:49Z
+host       ventunoq
+kernel     6.8.0-1084-qcom
+arch       aarch64
+build_id   20260710-235
+model      Qualcomm Technologies, Inc. Monaco Monza addons
+files      1051
+links      21
+manifest   1054 entries

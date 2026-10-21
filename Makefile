@@ -27,6 +27,12 @@ OBJ_COMMON := $(patsubst %.c,$(B)/%.o,$(SRC_COMMON))
 DEPS       := $(OBJ_COMMON:.o=.d) $(B)/src/surface_dump.d $(B)/src/profile_check.d \
               $(B)/src/main.d $(B)/src/daemon.d
 
+# Behavioural tests. Each tests/t_*.c is a main() of its own, linked one at a time against
+# the common objects - OBJ_COMMON already excludes the four programs' mains. Built under
+# $(B) like every other artifact, so the existing /build/ ignore covers them.
+TESTSRC := $(wildcard tests/t_*.c)
+TESTS   := $(patsubst tests/%.c,$(B)/tests/%,$(TESTSRC))
+
 BIN  := $(B)/qcctl-surface-dump
 BIN2 := $(B)/qcctl-check
 BIN3 := $(B)/qcctl
@@ -60,25 +66,44 @@ $(B)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(B)/tests/%: tests/%.c tests/t.h $(OBJ_COMMON)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $< $(OBJ_COMMON) $(LDFLAGS)
+
+tests: $(TESTS)
+
+# The behavioural suite. `check` is the compilation gate and stays that; this runs code.
+# Each test prints its own line and fails if any check failed OR if it checked nothing.
+#
+# The shell half drives the BINARIES through argv, so they are dependencies: without them
+# `make test` on a freshly cleaned tree failed on a missing build/ rather than on a
+# regression, and CI only survived it because `make check` happened to run first.
+test: $(TESTS) $(BIN) $(BIN2) $(BIN3) $(BIN4)
+	@[ -n "$(TESTS)" ] || { echo "== no tests found in tests/"; exit 1; }
+	@fail=0; for t in $(TESTS); do ./$$t || fail=1; done; \
+	 sh tests/sh/run.sh || fail=1; \
+	 [ "$$fail" = 0 ] || { echo "== TESTS FAILED"; exit 1; }; \
+	 echo "== tests passed"
+
 # A real optimised compile under both compilers, not -fsyntax-only: the optimiser is
 # what finds -Wformat-truncation and friends.
 check: clean
 	@echo "== gcc =="
-	@$(MAKE) --no-print-directory CC=gcc all
+	@$(MAKE) --no-print-directory CC=gcc all tests
 	@$(MAKE) --no-print-directory clean
 	@# Guarded: an absent clang used to abort check with exit 127 and leave build/ empty.
 	@if command -v clang >/dev/null 2>&1; then \
 	    echo "== clang =="; \
-	    $(MAKE) --no-print-directory CC=clang all; \
+	    $(MAKE) --no-print-directory CC=clang all tests; \
 	    $(MAKE) --no-print-directory clean; \
 	else echo "== clang not installed, skipped"; fi
 	@echo "== cross-compile for the board (aarch64) =="
 	@if command -v $(CROSS) >/dev/null 2>&1; then \
-	    $(MAKE) --no-print-directory CC=$(CROSS) all >/dev/null && echo "  builds for aarch64"; \
+	    $(MAKE) --no-print-directory CC=$(CROSS) all tests >/dev/null && echo "  builds for aarch64"; \
 	    $(MAKE) --no-print-directory clean; \
 	else echo "  SKIPPED: $(CROSS) not installed"; fi
 	@# Always leave build/ native and populated, whichever branches above ran.
-	@$(MAKE) --no-print-directory all >/dev/null
+	@$(MAKE) --no-print-directory all tests >/dev/null
 	@echo OK
 
 # Assemble the flat staging directory the installer works from, cross-building first and
@@ -202,5 +227,5 @@ clean-objs:
 clean:
 	rm -rf $(B)
 
-.PHONY: all check cross stage stage-native clean clean-objs
+.PHONY: all check test tests cross stage stage-native clean clean-objs
 -include $(DEPS)

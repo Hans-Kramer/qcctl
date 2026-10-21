@@ -227,6 +227,20 @@ int fanown_set(struct fanown *fo, int state)
 {
     char path[PATH_MAXLEN], val[16];
 
+    /* CLAMPED TO THE DEVICE. fo->max_state is read from the cooling device at take time, and
+     * this is the one place every fan write in this project passes through, so bounding it
+     * here bounds all of them. A state above max_state is refused by the kernel with EINVAL,
+     * so the unclamped version turned a config mistake into a write that failed at every
+     * tick - visible only in the journal, and only if someone looked.
+     *
+     * The config is still the place to catch it: fanconfig_validate refuses a strategy whose
+     * ceiling exceeds the named device, which is where an operator finds out. This is the
+     * backstop for everything that does not come from a validated config. */
+    if (fo->max_state > 0 && state > fo->max_state)
+        state = fo->max_state;
+    if (state < 0)
+        state = 0;
+
     fo->last_state = state;
     spath(path, sizeof path, THERMAL_DIR "/cooling_device%d/cur_state", fo->cdev_idx);
     snprintf(val, sizeof val, "%d", state);

@@ -30,6 +30,11 @@ MANIFEST=$STATE/install.manifest
 ETC=/etc/qcctl
 UNITDIR=/etc/systemd/system
 FANZONE=cpuss-0-0-thermal
+# Where this script LOOKS, as opposed to where it installs. QCCTL_SYSROOT relocates the
+# former onto a captured tree - the same hook the binaries and fan-release.sh honour - so the
+# file bookkeeping can be exercised off a board. Destinations stay absolute: an install that
+# could be redirected is a different contract, and not one this project offers.
+SYSFS="${QCCTL_SYSROOT:-}/sys"
 
 note() { echo "  $*"; }
 warn() { echo "  !! $*"; }
@@ -133,7 +138,7 @@ arch=$(uname -m)
 [ "$arch" = aarch64 ] || warn "this board reports $arch, not aarch64 - unexpected for this board"
 # Discovery by name: if the fan's zone is not here, this is not the board we built for.
 zfound=0
-for z in /sys/class/thermal/thermal_zone*; do
+for z in "$SYSFS"/class/thermal/thermal_zone*; do
     [ "$(cat "$z/type" 2>/dev/null)" = "$FANZONE" ] && { zfound=1; note "   fan zone: ${z##*/} ($FANZONE)"; break; }
 done
 [ "$zfound" = 1 ] || die "no thermal zone named '$FANZONE' - wrong board?"
@@ -355,7 +360,7 @@ for _f in /run/qcctl/active /run/qcctl/status; do
 done
 note "   enabled: $(systemctl is-enabled qcctld.service)"
 for p in 0 2 4; do
-    g=/sys/devices/system/cpu/cpufreq/policy$p/scaling_governor
+    g=$SYSFS/devices/system/cpu/cpufreq/policy$p/scaling_governor
     [ -r "$g" ] && note "   policy$p governor: $(cat "$g")"
 done
 # Now that nothing can fail and lose a path, keep the last line for each one and drop the

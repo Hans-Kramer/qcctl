@@ -18,6 +18,17 @@
 // Re-apply the profile named in the root-owned active file. Carries no argument.
 #define CONTROL_REQ_REBASELINE "REBASELINE\n"
 
+/* ONE REQUEST PER WRITE, and one per connection for COOLMAX.
+ *
+ * Each read is matched as a whole: a buffer carrying two requests has only its first
+ * honoured, and a request split across two writes matches neither and is refused. Both are
+ * measured behaviours, pinned in tests/t_control.c, not accidents of the parser - and they
+ * are left as they are deliberately. Splitting the buffer into lines would mean either
+ * discarding a trailing fragment or buffering it across reads, and both change what a
+ * 0666 socket accepts; the clients here are this project's own, each of which writes one
+ * request and then either waits or exits. A batching client is the case to document, not
+ * the case to widen the vocabulary for. */
+
 struct control {
     int  listen_fd;                     // -1 when not listening
     int  cli[CONTROL_MAXCLI];           // -1 = free slot

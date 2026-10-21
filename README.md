@@ -11,10 +11,15 @@
 > unexpected hardware the validator refuses the config and the installer
 > refuses to install, but do not rely on that as a safety net.
 >
-> The gate in this tree is **compilation only**: `gcc`, `clang` and the
-> `aarch64` cross build at `-Wall -Wextra -Werror`. There is **no automated
-> behavioural test suite yet**. Every figure in these docs was measured on
-> hardware by hand, which is not the same as being re-checked on every change.
+> The gate in this tree compiles under `gcc`, `clang` and the `aarch64` cross
+> build at `-Wall -Wextra -Werror`, and runs **707 behavioural checks** — the
+> curve and ownership logic, both config parsers and their refusals, the
+> apply-and-roll-back path, the flag surface, the control socket, the scripts, the
+> daemon and the installer, all against a captured board — on x86-64 and on
+> `aarch64`. What a
+> fixture cannot show is the kernel reacting, so **35 hardware checks stay in
+> `tests/board-check.sh`, run by hand on a board; the gate does not run them.**
+> Every thermal and fan figure in these docs was measured by hand.
 >
 > Install, removal, reinstall and a cold boot have been exercised on hardware;
 > removal returns the board to stock, and after a power cycle `policy2` comes up
@@ -283,16 +288,27 @@ numbers. If the retries fail it exits **non-zero** so systemd restarts the unit.
 ## Correctness
 
 ```sh
-make check      # compiles under gcc, clang and the aarch64 cross build
+make check           # compiles under gcc, clang and the aarch64 cross build
+make test            # everything below: 707 checks, and no board or root needed
+sh tests/sh/run.sh   # 131 of them: the flag surface, scripts, daemon, installer
 ```
 
 Clean under `-Wall -Wextra -Werror` at `-O2` for all three. `char` is unsigned on aarch64 and
 signed on x86, among other differences, so a native-only gate cannot see a whole class of bug —
 which is why the cross build is part of the gate rather than a release step.
 
-There is **no automated behavioural gate yet** — `make check` is a compilation gate, not a
-behavioural one. `QCCTL_SYSROOT` exists so that one can be built without a board or root, and
-that is an open item rather than a finished claim. See [`TODO.md`](TODO.md).
+The behavioural suite needs neither a board nor root. `QCCTL_SYSROOT` relocates every read
+onto a captured tree, and the `.manifest` beside it carries the modes and owners a copied tree
+cannot; `qcctld --stats-cmd` feeds the daemon a canned NDJSON stream in place of `qcstats`.
+CI runs both halves on x86-64 and on `ubuntu-24.04-arm`, and a third job asserts this tree's
+`STATS_SCHEMA_V` against `qcstats`' `QCSTATS_JSON_SCHEMA` — a mismatch there is otherwise
+silent, because a renamed field reads as "not measured" forever.
+
+What the gate does **not** run is `tests/board-check.sh`: 37 checks that need a real thermal
+zone and a real fan — the five release paths, the watchdog, `--fan-baseline capture`'s
+read-back, and an install, uninstall and reinstall cycle. It is run by hand on a board before
+a release, and it leaves the board installed, the zone enabled and the fan in the kernel's own
+state. See [`TODO.md`](TODO.md) for what the suite still does not cover.
 
 ---
 

@@ -13,6 +13,327 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A behavioural suite: 275 checks off hardware, 35 on it.** `make check` compiled this tree;
+  nothing executed it. Every behavioural claim in these docs came from a measurement made by
+  hand, once, on one board — and going back over the fourteen defects fixed this week, most
+  needed no board to find. Three of them were found by a test I ran on hardware that would
+  have run just as well in CI.
+
+  The harness is `tests/t.h`: counting macros, no framework, so the zero-dependency promise
+  holds. Each `tests/t_*.c` is a `main()` linked against every object but `main.o`, built into
+  `build/tests/`. Seven files, run by `make test` alongside the shell suite:
+
+  - `t_curve.c` — `curve_next()` steps up at once and down only after the full hysteresis;
+    `MIN_STATE` leaves 0 legal; `target_next()`'s deadband and step interval; the 85 °C
+    safety clamp, which is not configurable.
+  - `t_fanown.c` — `fanown_release_mode()` returns 0 below the active trip, the cooling map's
+    floor at or above it, and `LEAVE_MAX` with no temperature to judge by; `fanown_clear_point()`
+    is trip minus hysteresis and is *not* the release threshold. Both of this week's fan
+    defects lived in these two functions. Each case now states the device tree it needs,
+    because the first version let one case's cooling map leak into the next.
+  - `t_config.c` — units are mandatory, an off-OPP frequency is refused, `FAN MODE curve`
+    without a `FAN CURVE` is a config error, `config_disruptive()` is per profile and not
+    per file, and the exit codes are 0/2/3/4.
+  - `t_apply.c` — `apply_verify()` and `state_verify()` divergence counts, including the guard
+    that returns −1 when candidates existed and nothing could be read. That guard was
+    untested at first: breaking it deliberately changed no result, which is how the missing
+    case was found.
+  - `t_surface.c` — the board probe against a captured tree: three policies, 48 zones, the
+    cooling device bound by name rather than by number.
+  - `t_contract.c` — the cross-project contract, fed a line `qcstats` produced from its own
+    committed fixture: all seven fields come back through `stats_extract_fan()`,
+    `stats_extract_cpu()` and the thermal lookups. Field spelling and order are load-bearing,
+    because the parser is `strstr`, and a renamed field reads as "not measured" forever.
+
+  `tests/sh/` is the other 66, with `t_eq`/`t_has`/`t_file_is` helpers and exit 77 for a skip:
+  `t_fan_release.sh` drives the release script through the seven cases written by hand this
+  week, `t_daemon.sh` runs the whole daemon loop against a fixture — a curve drives
+  `cur_state`, the watchdog corrects a stale state and stands down when the zone reads
+  `disabled`, a sampler that ignores `SIGTERM` is killed rather than holding the exit open —
+  and `t_install.sh` runs the installer as root in a container.
+
+  Three hooks that had been built and never used now carry it: `io_set_sysroot()` with the
+  `.manifest` that emulates the modes and owners a copied tree cannot hold, `qcctld
+  --stats-cmd` for a canned NDJSON stream in place of `qcstats`, and
+  `QCCTL_SAMPLER_RETRY_MS` so a test need not wait out a retry. `install.sh` and
+  `uninstall.sh` now honour `QCCTL_SYSROOT` for their `/sys` **probes** only; destinations
+  stay absolute, because a test that could redirect them would prove nothing about an install.
+
+  The fixture is `tests/capture-fixture.sh`, run on a board: 1053 files and 21 symlinks, 70 KB,
+  of which the `.manifest` is 59 KB. Fidelity was checked by diffing `qcctl-surface-dump` on
+  the board against the same binary on the fixture — 73 lines each, differing only in the
+  sysroot line, the hwmon prefixes and one fan state that moved between the two runs.
+
+  A container has no systemd as PID 1, so `install.sh` runs steps 1–7 and dies at step 8. That
+  makes the container test the mid-run failure case by construction, which is exactly where
+  this week's manifest defect lived.
+
+- **Both config parsers' refusals, every curve edge, and the harness's own failure mode.**
+
+  `tests/t_fanconfig.c` is new: about 270 lines of `fancurve.c` - the whole path from a
+  hand-written file to a validated strategy - had no caller in any test. `t_curve.c` builds
+  its curves in C, so every refusal in between was unreached: descending POINTs, a deadband
+  of zero, a step interval that outruns the board, a poll interval of 10ms, a setting in the
+  wrong kind of block, an airflow delta below the fan's measured noise floor. These are the
+  OPERATOR's mistakes rather than the programmer's, and a refusal naming a line number is the
+  difference between a config corrected in a minute and a fan that behaves oddly for a week.
+  It also validates against a surface carrying a SECOND cooling device with four states,
+  because a ceiling check that only ever sees the ten-state fan proves nothing about the
+  others - and this board really has maxima from 3 to 100.
+
+  `config_validate`'s cross-field refusals are covered too. The UCLAMP pair carries its own
+  history in the source: *"this check existed for the cpufreq pair above and not for this
+  one, which is how 'lowpower' shipped unappliable while --verify called it applicable"*.
+  Disabling it, or the trip-ceiling rule that keeps a profile from raising a thermal
+  protection, or the cpufreq MIN>MAX pair, each passed the whole suite.
+
+  **Every curve boundary is now probed AT the boundary.** Six independent off-by-one
+  mutations survived before: the hysteresis WIDTH (direction was pinned, size was not), the
+  deadband becoming an open interval, the step interval off by a millisecond, the safety
+  release point, and `MIN_STATE` on the falling path - which, dropped, let the fan sit at a
+  state the operator had declared untrustworthy.
+
+  Smaller things, each a way the suite could have misled: `t_contract.c`'s "written in two
+  halves" never exercised line reassembly, because both halves arrived before the first
+  sample; the overflow flag guarded a branch no input could reach; `duty_pct` was bounded
+  only from above, so a negative percentage passed. `t_surface.c` asserted the GPU and the
+  hwmon resolution only on an EMPTY tree, where absence is the right answer. `t_apply.c` had
+  a case reading a file an earlier case created, a comment-line rule that was never the
+  reason a line was skipped, and a `fopen` failure that returned silently and still printed
+  "ok". The cooling-device exclusion is now pinned as NARROW - `cur_state` alone, not every
+  attribute of a cooling device.
+
+  And the harness itself: `T_TRUE` records a failure and carries on, so a NULL return
+  segfaulted mid-file - the run failed, but with a bare "Segmentation fault", no summary, and
+  every later case silently skipped. `T_REQUIRE` stops the case instead. The same mutation
+  now gives eight named failures and a summary.
+
+  Shell side: a `REBASELINE` is driven end to end by a real `qcctl -m`, which notifies the
+  daemon on its way out; `t_cli.sh` uses a two-profile config, so "the disruptive gate is per
+  PROFILE" is finally distinguishable from "per FILE" - a defect this project already fixed
+  once; and `t_install.sh`'s `systemctl` stub answers per verb instead of saying yes to
+  everything, so step 9's unit checks are exercised in both directions rather than masked.
+
+- **The socket's limits, the watchdog's bound, and the drift CI could not see.** Five gaps
+  where a mutation survived, closed together because they are the ones with consequences.
+
+  **The socket is now tested as a CLOSED set.** Eight hand-picked refusals proved nothing
+  about what else might be accepted; a fixed specification - hold only on `COOLMAX\n` or
+  exactly `COOLMAX`, re-baseline only on the same two forms of `REBASELINE`, refuse the rest
+  - is now written in the test once and 29 candidates are measured against it. Making
+  `REBASELINE` case-insensitive reddens four checks; adding a `FANOFF` verb reddens one.
+  **And its capacity is pinned**: `CONTROL_MAXCLI` clients can hold at once, a further client
+  gains no slot and is told by end-of-file, the existing holds are undisturbed, and a freed
+  slot is reusable. Both forms of that bug - evicting an existing client, and writing at
+  slot -1 where `cli[-1]` aliases `listen_fd` - previously HUNG the test rather than failing
+  it, so every client read in that file now has a deadline: a server that goes silent
+  produces a named failure in half a second instead of a job that times out saying nothing.
+
+  **And one availability limit, measured rather than argued about.** Two of the audits
+  disagreed over whether a client that connects and says nothing matters: the socket is 0666
+  on the argument that a request can only ever ask for MORE cooling, which is about what a
+  client can make the daemon do and says nothing about taking up room. Measured: there is no
+  idle timeout, so `CONTROL_MAXCLI` silent clients fill the slot table and a further
+  `--cool-max` is accepted, closed without a reply, and gets no hold. An unprivileged process
+  can therefore stop another unprivileged process raising the fan. It is recorded in `TODO.md`
+  and pinned by a test rather than fixed: what is denied is the extra cooling, the kernel's
+  own governor runs underneath this path throughout and the socket cannot touch it, and every
+  fix — an idle timeout, a per-uid quota — adds a way for a hold that is wanted to be dropped.
+
+  **The watchdog's bound.** Its 60-second gate between corrections is asserted (a second
+  stale state inside the window is left alone, with nothing logged), and so is the forget
+  window - using `QCCTL_FANWD_FORGET_MS`, a hook whose own comment said "for the tests" and
+  which no test had ever set. The cap at exactly three corrections is still uncovered: three
+  of them need two 60-second waits and `FANWD_INTERVAL_MS` has no override. The test says so
+  rather than implying otherwise.
+
+  **Producer drift the cross-repo check could not see.** `stats_extract_cpu` searches forward
+  from a label to find `"mhz"`, so emitting them the other way round makes every policy read
+  its neighbour's clock - policy 0 gets 940, policy 1 gets 844, policy 2 reads nothing - and
+  `qcstats.h` declares adding a field *not* a schema bump, so that can ship. Every assertion
+  held: the labels were right, the count was right, and a 100-4000 MHz plausibility band
+  accepts another policy's number. Each frequency is now compared against the bytes inside
+  its own policy object, read out of the raw line independently of the parser. Both forms of
+  reorder redden four checks.
+
+  **And the two hand-synced constants are compared in the test**, not only by a `sed` step in
+  the workflow. The default run reads a frozen fixture, so it agreed with itself forever and a
+  developer who bumped one side locally still got a green `make test`. The test now reads the
+  sibling's `QCSTATS_JSON_SCHEMA` at run time; a one-sided bump fails, and when the sibling
+  is not checked out the run prints that the comparison did not happen rather than passing
+  quietly.
+
+- **Three tests that would have failed on correct code.** A test that reddens when nothing
+  is wrong is worse than one that misses something: it teaches a reader to ignore the suite.
+
+  `t_contract.c`'s schema-bump probe built its forged line with `p + 5`, assuming the version
+  was one character. At version 10 it spliced from the second digit, forged `{"v":990,…}` and
+  failed - on a schema bump that had been made correctly on both sides. It now skips the
+  digits. Confirmed by bumping both constants to 10, regenerating a stream and running
+  against it.
+
+  `t_surface.c` pinned `nzone` at a literal 48, which contradicted its own header: every
+  other count in that file is read out of the capture *so that a re-capture cannot invalidate
+  the test*. It now counts the capture's `thermal_zone*` entries, and asserts `ncdev` the
+  same way. Verified in both directions - an extra zone in the fixture no longer fails, and a
+  discovery that skips one still does. Its `fixture_tokens()` helper also counted without a
+  cap and across every line, while the code stores at most `MAX_OPP`/`MAX_GOVERNORS` from the
+  first line only; it now takes the cap as an argument.
+
+  `tests/platform-audit.sh` matched image builds with a literal `href="2026…`. The first 2027
+  publication would have made a weekly unattended job report "the extractor is broken" - the
+  exact false diagnosis the rest of that script was written to avoid. It matches the
+  `YYYYMMDD-NNN` shape now, and says what it means when nothing matches.
+
+- **The apply path's own guarantee is tested now: `tests/t_commit.c`, 57 checks.** `apply.h`
+  opens by promising two things — every path is captured before it is written, and a write
+  that fails mid-apply rolls back the writes already made, because "leaving the machine in a
+  state no config describes is the one outcome worse than failing". Neither was tested. The
+  success path ran through the CLI test, but nothing anywhere made a write FAIL, so
+  `apply_rollback` could be deleted outright and every check in both repositories still
+  passed. `apply_orphans` — the revert-on-switch mechanism, added after a real board was left
+  with a fan trip 7 °C late — had no coverage either, nor did `selection_save`/`_load` or
+  `state_save_tagged`.
+
+  A write is made to fail the way a kernel fails one: the target exists, was readable when
+  the plan was built, and refuses the open. `chmod 0444` produces exactly that. Three writes
+  with the second refused now assert that the first is undone, the second never landed, and
+  the third was never attempted. Alongside: the capture holds PRIOR values and not new ones;
+  a write-only node captures nothing and that is not a rollback failure; a dry commit still
+  captures; the orphan sweep reverts what the new profile does not mention and leaves what it
+  does; a dry sweep counts and reports without writing, with its stdout captured and
+  asserted; no previous profile and a previous profile since deleted from the config are both
+  no-ops; a selection is scoped to its boot id and one forged from another boot is refused;
+  and a tagged snapshot carries its id.
+
+  One thing is deliberately not asserted: rollback walks its captures newest-first, which
+  matters for the min/max dance, but plain files in a fixture cannot observe the order — so
+  the test pins that nothing is left behind rather than pretending to see the sequence.
+
+  Six mutations were run to confirm the checks can fail: deleting the rollback call, making
+  every capture look unreadable, making the orphan sweep forget the new profile owns a path,
+  making it count without writing, making `selection_load` ignore the boot id, and dropping
+  the snapshot's tag. Each reddened between one and five checks.
+
+- **The flag surface, and the socket that guards privilege.** Two files, 102 checks, both
+  for layers the rest of the suite reached around.
+
+  `tests/sh/t_cli.sh` (55) drives the built binary through `argv`. Of 22 options CI ran one
+  — `--help`, for its exit status alone — and three more were exercised only by hand on a
+  board. Dispatch precedence was a documented contract with no test, and the exit codes
+  0/2/3/4 were asserted below the CLI, through `config_*()`, never through it. The order is
+  now pinned where it is load-bearing: `--fan-baseline` over `--query`, `--query` over
+  `--list`, `--verify` over `--list`, and `--help` short-circuiting the parse loop so a
+  `--reset --help` resets nothing. Both routes to 4 are covered — a disruptive profile
+  without `--allow-disruptive`, and `--verify` on a config that is valid but names a path the
+  kernel does not expose, which the test produces by moving one attribute out of its copied
+  fixture. `--dry-run` is checked against a checksum of the entire tree before and after,
+  with a real apply as the positive control, because a dry-run assertion passes trivially
+  against a binary that cannot write at all.
+
+  `tests/t_control.c` (47) covers the control socket directly. It is mode 0666 — any user on
+  the board can connect — and the only thing making that safe is that the vocabulary has no
+  word for *less* cooling. That boundary rested on two string comparisons and nothing
+  exercised it. Eight plausible requests are refused and dropped, including `COOLMIN`, a
+  lowercase `coolmax`, and `COOLMA` as a prefix of the real word; `COOLMAX` holds for exactly
+  as long as the connection lives; two clients hold independently, so one leaving does not
+  release the fan under the other; and `control_drop_holds()` closes both, which is how a
+  client learns the daemon said OK and then could not take the zone. Breaking the refusal
+  branch reddens eight checks.
+
+  `--cool-max` end to end is in `t_daemon.sh` (now 35), where it belongs: the hold **is** the
+  connection, so it needs a real second process. A client raises the fan from the curve's 0
+  to the cooling device's maximum, the status file reports the hold, the daemon logs the
+  force, and when the client is signalled the hold ends and the curve has the fan back. One
+  thing that test had to account for: the client's stdout is block-buffered when redirected,
+  so its whole account arrives at exit — recorded in `TODO.md` as a defect, since a command
+  whose purpose is to report a hold *while it lasts* should not be silent for the duration.
+
+  Both files were shown to fail against mutated source rather than edited expectations: an
+  unknown option returning 1 instead of 2, `--dry-run` performing its writes, `--csv`
+  selecting the human format, and the socket accepting an unknown request.
+
+  **These tests found three defects on their first run**, all of them in what the CLI says
+  rather than what it does, and all recorded in `TODO.md` rather than fixed in this entry:
+  `--reapply --query` announcing a re-apply it does not perform, `-m <profile> --query`
+  ignoring the apply with no message at all, and `--cool-max`'s buffering. None had been
+  found by hand in the preceding week of hardware testing — the flags were exercised, but
+  never in combination, and never with the output read back by something that cared.
+
+  The suite was written with AI assistance (Claude Opus 5, paired), which the
+  `SPDX-FileContributor` line in each new test file records. The three findings above are the
+  suite's first contribution that is not itself a test — and the distinction worth keeping is
+  the suite rather than the assistance: this week's earlier defects were found the same way,
+  by scripts written for one question and then discarded. These came from checks that run
+  again on every push.
+
+- **`tests/board-check.sh`, the acceptance script the gate cannot run.** 37 checks in six
+  sections — `surface`, `reset`, `watchdog`, `capture`, `install`, `release`, plus an
+  `envelope` measurement that is not a test — resolving the zone and cooling device **by name**
+  and restoring the board through a trap however it exits. Last run green on 2026-10-21: 37
+  checks, 7m43s, board left installed with the zone enabled and its trip as it shipped.
+
+  Four of its own flaws were found by running it, and each is the same mistake in a different
+  place: a check that could pass without testing anything.
+
+  Its stand-down check — "a disabled zone belongs to someone else" — ran twelve seconds after
+  a correction, inside the watchdog's own sixty-second gate, so nothing was due to fire and
+  the check passed whether or not the ownership test existed. The daemon is restarted first
+  now. **Proven by cross-building a `qcctld` with that check removed and installing it on the
+  board: the section fails with two named failures.** (Replacing a running daemon's binary
+  needs the unit stopped first — the copy otherwise fails with `ETXTBSY` and leaves the
+  mutant in place, which is what happened on the first attempt.)
+
+  Its journal checks read the last N *lines*, which may be minutes old: an assertion that the
+  watchdog did NOT act was satisfied by its own correction from an earlier section. There is a
+  time-bounded read now, and the checks that ask "did this happen just now" use it.
+
+  The watchdog section needed the board below its clear point — 35.0 °C against an idle
+  temperature of about 36 °C — so whether it could run at all depended on the room, and it
+  failed on a warm day and called that a defect. The fan's active trip is raised for the
+  duration instead, which lifts the clear point with it; only the active trip is touched, and
+  it is put back below and by the restore trap. That also surfaced something worth knowing:
+  the surface, trip temperatures included, is discovered once at startup, so a trip moved
+  underneath a running daemon leaves its watchdog comparing against the old clear point until
+  it restarts.
+
+  And both release cases were landing on the same side of the trip, which left "a release
+  below the trip decides on 0" — the branch the 2026-10-17 defect was in — untested on
+  hardware. Each branch is forced now, and the decision is checked against the temperature
+  **the daemon itself measured and logged**, not one the script read seconds earlier: that was
+  a race, and it reported a defect that was not there.
+
+  Two of its assertions had to be rewritten before they were honest, and the reason is worth
+  recording. They pinned `cur_state` a few seconds after a release and failed: the fan read 4
+  where 0 was expected, then 6. Neither was a defect. Writing `mode=enabled` is itself one
+  governor evaluation, and this zone has no `polling_delay`, so it is evaluated on tsens
+  threshold interrupts and can step up more than once while the board cools. Any ceiling on
+  the resulting state asserts `step_wise`'s behaviour, not this project's. What is ours is the
+  **decision** — now read from the journal — and the **shape** of what is left behind: with a
+  map floor of 4, the governor's own output is 0 or 4 and up, never 1 to 3, so a state in that
+  band can only be a manual write nobody handed back. That predicate was confirmed to fail
+  against a hand-written state 2 before it was trusted.
+
+- **Two more CI jobs, and a weekly platform audit.** `aarch64` runs `make all`, `make test`
+  and the shell suite natively on `ubuntu-24.04-arm`, closing a gap the `Makefile`'s own
+  comment names — `char` is unsigned there and signed on x86, compiled on both and until now
+  executed on neither. `contract` asserts `STATS_SCHEMA_V` against `qcstats`'
+  `QCSTATS_JSON_SCHEMA`, generates a stream from the freshly built sampler, and fails if any
+  shell test reports SKIPPED, because a suite that skips silently is a suite that passes
+  silently. `platform.yml` is weekly and manually dispatchable, deliberately outside the push
+  gate so a network fetch cannot make a push flaky: it asks launchpad for every published
+  `linux-qcom` version, fetches the 1.3 MB `linux-buildinfo` package rather than the 180 MB
+  `linux-modules`, and asserts the eight kernel config flags every control point here depends
+  on. The published image build ids are compared against the recorded `BUILD_ID` as a warning,
+  not a failure.
+
+  The 6.5 GB image itself is never fetched. No runner can boot it — there is no QEMU machine
+  model for a QCS8275, and no firmware or device tree to give one — so the only part of it this
+  project cares about, the kernel, cannot run in CI at any price. What remains inside it is
+  Ubuntu 24.04 arm64 userspace, which the `aarch64` job reproduces exactly in seconds; against
+  that, the download alone exceeds a runner's free disk once decompressed, and GitHub caps a
+  repository's cache at 10 GB. The build id carries the information; the bytes do not.
+
 - **`apply` now reads its plan back and says whether the hardware kept it.** A successful
   write proves only that the store handler took the bytes; it may have clamped a value,
   rounded it, or been superseded moments later by another writer — on this board
@@ -221,6 +542,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release ships and the config lacks.
 
 ### Fixed
+
+- **A fan TARGET with no `MAX_STATE` was validated against nothing.** `fanconfig_validate`
+  skipped its ceiling check entirely when `MAX_STATE` was absent, and `target_next()` then
+  bounded at a literal 10 — this board's FAN maximum, and wrong for every smaller cooling
+  device on it, of which there are several with maxima from 3 to 100. A `TARGET` naming the
+  four-state `cdsp:cdsp_sw` validated cleanly and the daemon then commanded states the
+  kernel refuses with EINVAL: a write that failed at every tick, visible only in the journal
+  and only to someone looking. A CURVE was never affected — every POINT is checked against
+  the named device.
+
+  Two changes, because the two answers belong in different places. `fanconfig_validate`
+  refuses a target with no `MAX_STATE` on a device with fewer states than the default and
+  asks for an explicit ceiling, which is where an operator should find out; the number
+  decides how hard a device is driven, so picking one for them would be worse than asking.
+  And `fanown_set()` — the single point every fan write in this project passes through —
+  clamps to the device's own maximum, as a backstop for anything that does not come from a
+  validated config. The literal is now `TARGET_TOP_DEFAULT`, named and documented.
+
+  Found by the behavioural suite's audit on 2026-10-20, and the consequence measured on the
+  board: writing 9 to `cdsp:cdsp_sw`, which has four states, is refused and `cur_state` stays
+  where it was. So the unclamped version did not drive a device too hard - it issued a write
+  the kernel rejected on every tick, which is the quieter failure of the two.
+
+- **`--query` asked together with a change did the change silently not at all.** `-m`,
+  `--reset`, `--save-state` and `--reapply` all lost to `--query` by dispatch order, which
+  reported the board and exited 0. A caller scripting an apply saw success and no effect.
+  The combination is refused now, exit 2, the same way `--cool-max` already refuses the same
+  conflict — two answers to "what should happen" is not something to resolve by the order
+  the flags happen to be checked in.
+
+- **`--reapply` announced a re-apply before it was dispatched,** so `--reapply --query`
+  printed "re-applying the recorded profile" and then only reported. The announcement has
+  moved to where the apply happens.
+
+- **`--cool-max` reported nothing while the hold was active, when redirected.** stdout to a
+  file or a pipe is block-buffered, so the whole account — including the fact that the fan
+  was being held at maximum — arrived only when the process exited. For a command whose
+  purpose is to report a hold *while it lasts*, that is backwards; a terminal is
+  line-buffered, which is why it had never shown by hand. stdout is line-buffered for the
+  duration of the hold now.
 
 - **A disruptive setting in one profile demanded `--allow-disruptive` from every other.**
   `config_validate()` collected them across the whole file, so `CPU_ONLINE 0 0` in a profile
