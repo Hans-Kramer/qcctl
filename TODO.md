@@ -25,10 +25,14 @@ source and not yet confirmed on hardware.
 
 - **No pre-sleep hook, and no way to verify one.** Nothing releases the fan before the
   system sleeps, so a `curve` or `target` profile leaves the zone `disabled` and the fan
-  where the strategy left it. The two candidate fixes, and why neither shipped, are in the
-  README; the blocker is that this board resumes from nothing, so the resume half of either
-  cannot be shown working. Revisit when it resumes, or when `rtcwake` is shown to wake it.
-  **[measured]**
+  where the strategy left it. Two candidate fixes, neither shipped: a oneshot unit ordered
+  `Before=sleep.target` to stop the daemon so the existing `ExecStopPost` release runs —
+  twelve lines, no new code — or teaching the daemon logind's `PrepareForSleep`, which keeps
+  it alive across sleep with its drift baseline and airflow history intact at the cost of a
+  `libsystemd` link the cross build would also need. The blocker is the same for both: this
+  board resumes from nothing, so the resume half cannot be shown working, and this project
+  does not ship behaviour it cannot demonstrate. Revisit when it resumes, or when `rtcwake`
+  is shown to wake it. **[measured]**
 
 - **No `CapabilityBoundingSet=` on `qcctld.service`.** `ProtectKernelTunables=` and
   `ProtectSystem=strict` would break a daemon whose job is writing `/sys`, but the

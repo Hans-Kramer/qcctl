@@ -104,6 +104,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`README.md` is an overview now, not a manual.** 412 lines down to 136: the build and
+  usage instructions it duplicated are in `docs/BUILD.md` and `docs/USAGE.md`, the
+  reasoning behind decisions is in this file, and the *Correctness* section's figures were
+  claims about the suite that the suite itself states by running. What stayed, because it is
+  operational rather than historical: the profile table, the two kinds of fan strategy,
+  airflow health, the daemon's one-sampler rule, a **Scope** section, and a short
+  **Limitations** list - this tool writes to thermal controls, and a reader deciding whether
+  to install it needs the sleep behaviour, the control-socket slot limit and the
+  multi-device cooling map in plain sight. Entries above that point at "the README's
+  limitations" mean that list.
+
+  Three sections had been cut mid-sentence and one claim was wrong: *Install* described a
+  staging directory without the `make stage` that assembles it, *Airflow health* lost the
+  `--fan-baseline capture` command it was introducing, and an "Install from GitHub" section
+  said a release builds on the board itself - which is qcstats' story, not this one. There
+  is no `qcctl` release to install from yet, and when there is, it will still need a staging
+  step and a sibling `qcstats`. The two candidate pre-sleep fixes that lived in
+  *Limitations* moved to `TODO.md`, where the open item they belong to already was.
+
 - **A refusal test no longer depends on the refusal to terminate.** The two capture checks
   above run under `timeout`, because the thing being refused is a two-minute action: when the
   refusal was mutated away the test waited for the capture instead of failing. Same rule as

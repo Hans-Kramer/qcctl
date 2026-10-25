@@ -7,9 +7,8 @@
 #
 # The gate does not run this and cannot: every check below depends on a thermal governor
 # reacting to a real temperature, a fan that actually turns, or a driver that clamps. The
-# suite in tests/ covers everything that does not. This script exists so the figures in the
-# docs are reproducible by someone other than their author - which is the standard the
-# README sets for itself.
+# suite in tests/ covers everything that does not. This script exists so the measured figures
+# in docs/USAGE.md and etc/fan.config are reproducible by someone other than their author.
 #
 #   sh board-check.sh              # the default sections
 #   sh board-check.sh --list       # what there is
