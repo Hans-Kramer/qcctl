@@ -13,12 +13,12 @@
 > refuses to install, but do not rely on that as a safety net.
 >
 > The gate in this tree compiles under `gcc`, `clang` and the `aarch64` cross
-> build at `-Wall -Wextra -Werror`, and runs **707 behavioural checks** — the
+> build at `-Wall -Wextra -Werror`, and runs **740 behavioural checks** — the
 > curve and ownership logic, both config parsers and their refusals, the
 > apply-and-roll-back path, the flag surface, the control socket, the scripts, the
 > daemon and the installer, all against a captured board — on x86-64 and on
 > `aarch64`. What a
-> fixture cannot show is the kernel reacting, so **35 hardware checks stay in
+> fixture cannot show is the kernel reacting, so **37 hardware checks stay in
 > `tests/board-check.sh`, run by hand on a board; the gate does not run them.**
 > Every thermal and fan figure in these docs was measured by hand.
 >
@@ -295,8 +295,8 @@ numbers. If the retries fail it exits **non-zero** so systemd restarts the unit.
 
 ```sh
 make check           # compiles under gcc, clang and the aarch64 cross build
-make test            # everything below: 707 checks, and no board or root needed
-sh tests/sh/run.sh   # 131 of them: the flag surface, scripts, daemon, installer
+make test            # everything below: 740 checks, and no board or root needed
+sh tests/sh/run.sh   # 186 of them: the flag surface, scripts, daemon, installer
 ```
 
 Clean under `-Wall -Wextra -Werror` at `-O2` for all three. `char` is unsigned on aarch64 and
@@ -349,6 +349,22 @@ state. See [`TODO.md`](TODO.md) for what the suite still does not cover.
   shipping neither is the same reason the rest of this suite exists: the resume half of either
   one cannot be demonstrated on hardware that does not resume, and this project does not ship
   behaviour it cannot show working.
+- **A silent client on the control socket holds its slot.** There is no idle timeout, so
+  `CONTROL_MAXCLI` (8) connections that say nothing fill the table, and a ninth `--cool-max`
+  is accepted, closed without a reply, and gets no hold: one unprivileged process can stop
+  another raising the fan. **Measured.** What it cannot do is lower cooling or release the
+  zone — the kernel's own governor runs underneath this path throughout, and the socket has
+  no vocabulary for touching it — so what is denied is the extra cooling, not the board's
+  thermal protection. Deliberate: an idle timeout or a per-uid quota each adds a way for a
+  hold that is *wanted* to be dropped, which is the worse failure. Pinned by
+  `tests/t_control.c`, so changing it is a decision rather than a drift.
+- **A zone whose cooling map binds several devices gets no floor.** Handing a zone back needs
+  the state the kernel's own map asks for, and a map that binds more than one cooling device
+  gives no way to tell which entry is the fan's: the entries name their devices by phandle,
+  and nothing reachable from a cooling device in sysfs identifies its device-tree node.
+  Rather than read the first entry and risk leaving the fan at a CPU's floor, such a zone is
+  reported as having no floor, and the release leaves cooling at maximum. Every cooling map on
+  the Ventuno Q binds exactly one device, so this is behaviour for other hardware.
 - **DDR frequency cannot be controlled.** `ddr_frequency_mhz` is write-only and sits on an AOSS
   QMP channel where every write times out. Residency *measurement* is possible but belongs to
   `qcstats`, since there is nothing here to act on.

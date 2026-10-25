@@ -100,15 +100,19 @@ for the board until you do.
 ## Tests
 
 ```sh
-make check
+make check           # compiles under gcc, clang and the aarch64 cross build
+make test            # 740 behavioural checks, no board and no root needed
+sh tests/sh/run.sh   # 186 of them: the flag surface, scripts, daemon, installer
 ```
 
-Builds under both `gcc` and `clang` and cross-builds for `aarch64`, all at
-`-Wall -Wextra -Werror -O2`. That is the whole gate in this tree.
+`make check` builds under both `gcc` and `clang` and cross-builds for `aarch64`, all at
+`-Wall -Wextra -Werror -O2`.
 
-There is **no behavioural suite yet.** `QCCTL_SYSROOT` relocates every path onto a sysfs
-tree captured from hardware, so one can run with no board and no root — that is an open
-item, not a finished claim. See [`TODO.md`](../TODO.md).
+`make test` runs the behavioural suite. `QCCTL_SYSROOT` relocates every path onto a sysfs
+tree captured from hardware, which is how it needs neither a board nor root; the fixture
+also carries a `.manifest` so that modes and owners a copied tree cannot hold are answered
+from it. What no fixture can show is the kernel reacting, so `tests/board-check.sh` stays
+hardware-only and the gate does not run it. See [`TODO.md`](../TODO.md).
 
 ---
 

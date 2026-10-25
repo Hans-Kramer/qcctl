@@ -54,6 +54,7 @@
  * driving. Bounded on purpose: a state that keeps coming back is someone's decision rather
  * than a leftover, and this daemon reports drift instead of fighting it. */
 #define FANWD_INTERVAL_MS 60000
+#define ENV_FANWD_INTERVAL "QCCTL_FANWD_INTERVAL_MS" /* for the tests; see --stats-cmd */
 #define FANWD_TRIES 3
 /* And the cap is forgotten after this long without one, so "three strikes" means three in
  * quick succession - someone fighting us - rather than three in a fortnight of uptime. */
@@ -1166,11 +1167,15 @@ badarg:
         long stale_after_ms = (long)strat_poll_ms(&strat) * 3 * MISS_LIMIT;
         long fanwd_last_ms = 0;
         long fanwd_forget_ms = FANWD_FORGET_MS;
+        long fanwd_interval_ms = FANWD_INTERVAL_MS;
         int fanwd_n = 0, fanwd_warned = 0;
         {
             const char *e = getenv(ENV_FANWD_FORGET);
             if (e && *e && atol(e) > 0)
                 fanwd_forget_ms = atol(e);
+            e = getenv(ENV_FANWD_INTERVAL);
+            if (e && *e && atol(e) > 0)
+                fanwd_interval_ms = atol(e);
         }
         int prev_holds = 0, coolmax_owned = 0;
         long coolmax_refused_ms = 0;
@@ -1541,7 +1546,7 @@ badarg:
                 fanwd_n = 0;
             }
             if (!rt.owned && fanwd_n < FANWD_TRIES
-                && (!fanwd_last_ms || mono_ms() - fanwd_last_ms >= FANWD_INTERVAL_MS)) {
+                && (!fanwd_last_ms || mono_ms() - fanwd_last_ms >= fanwd_interval_ms)) {
                 long clear_mc = 0;
                 int was = 0;
                 int r = fanown_correct_stale(&s, strat_zone(&strat), temp,

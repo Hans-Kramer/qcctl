@@ -9,6 +9,10 @@
 <policyconfig>
   <vendor>qcctl</vendor>
 
+  <!--
+    The action id is in a namespace this project controls, not one belonging to Arduino.
+    A GUI will hardcode it, so it is not a string to change casually.
+  -->
   <action id="io.github.hans_kramer.qcctl.manage">
     <description>Manage CPU, GPU and thermal power profiles</description>
     <message>Authentication is required to change the power profile</message>

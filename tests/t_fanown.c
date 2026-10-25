@@ -13,7 +13,8 @@
 // fanown_clear_point() and the cooling-map reader are tested here.
 //
 // The zone is built in this file rather than captured: the shapes that matter - no active
-// trip, no readable cooling map, a map that reads - are states this board cannot all be in.
+// trip, no readable cooling map, a map that reads, a map binding two devices - are states
+// this board cannot all be in, and the last of them is one it cannot be in at all.
 
 #define _GNU_SOURCE
 #include "../src/fanown.h"
@@ -47,15 +48,33 @@ static void zone_as_shipped(struct surface *s)
 }
 
 /* <phandle, min, max> in big-endian cells, as the device tree stores it. THERMAL_NO_LIMIT
- * is 0xFFFFFFFF, and the floor on this board is 4. */
-static void write_cooling_map(const char *zone_type, const char *map, unsigned min)
+ * is 0xFFFFFFFF, and the floor on this board is 4.
+ *
+ * `n` entries go into the one property, because that is how a map binding several cooling
+ * devices is stored - not as several properties - and `trail` appends bytes that complete
+ * no entry, which is the only other length a reader can meet. Both shapes are built here
+ * because every cooling-map on this board is exactly one entry of exactly 12 bytes. */
+static void write_cooling_map_n(const char *zone_type, const char *map,
+                                const unsigned *mins, int n, int trail)
 {
     char path[512];
-    unsigned char cell[12] = { 0, 0, 0, 0x2a,  0, 0, 0, 0,  0xff, 0xff, 0xff, 0xff };
+    unsigned char cell[12 * 4 + 7];
     FILE *f;
+    int i;
 
-    cell[4] = (unsigned char)(min >> 24); cell[5] = (unsigned char)(min >> 16);
-    cell[6] = (unsigned char)(min >> 8);  cell[7] = (unsigned char)min;
+    if (n < 1 || n > 4 || trail < 0 || trail > 7) {
+        T_FAIL("%s", "the cooling-map fixture was asked for a shape it cannot build");
+        return;
+    }
+    memset(cell, 0, sizeof cell);
+    for (i = 0; i < n; i++) {
+        unsigned char *c = cell + i * 12;
+
+        c[3] = (unsigned char)(0x2a + i);       /* a phandle per entry, all different */
+        c[4] = (unsigned char)(mins[i] >> 24); c[5] = (unsigned char)(mins[i] >> 16);
+        c[6] = (unsigned char)(mins[i] >> 8);  c[7] = (unsigned char)mins[i];
+        c[8] = c[9] = c[10] = c[11] = 0xff;     /* THERMAL_NO_LIMIT */
+    }
 
     snprintf(path, sizeof path,
              "mkdir -p '%s/proc/device-tree/thermal-zones/%s/cooling-maps/%s'",
@@ -71,8 +90,13 @@ static void write_cooling_map(const char *zone_type, const char *map, unsigned m
         T_FAIL("%s", "cannot write the cooling-device cell");
         return;
     }
-    fwrite(cell, 1, sizeof cell, f);
+    fwrite(cell, 1, (size_t)(n * 12 + trail), f);
     fclose(f);
+}
+
+static void write_cooling_map(const char *zone_type, const char *map, unsigned min)
+{
+    write_cooling_map_n(zone_type, map, &min, 1, 0);
 }
 
 /* Each test states the device tree it needs. Without this, a map left behind by an earlier
@@ -314,8 +338,9 @@ static void t_the_floor_reader_takes_the_highest(void)
     int want = -1;
 
     /* One map with one cooling device is all this board has, so the rule that the highest
-     * floor wins has never been exercised on hardware. A zone binding several devices is
-     * an open item; this at least pins the reader's half of it. */
+     * floor wins has never been exercised on hardware. Two single-device maps are the shape
+     * it applies to; a single map binding two devices is the shape below, where no floor
+     * can be attributed at all. */
     zone_as_shipped(&s);
     remove_cooling_maps();
     write_cooling_map("cpuss-0-0-thermal", "map-active", 4);
@@ -324,6 +349,62 @@ static void t_the_floor_reader_takes_the_highest(void)
     T_EQ_INT(fanown_release_mode(&s, "cpuss-0-0", 1, 40000, &want), FANOWN_LEAVE_AS_IS,
              "two maps are both read");
     T_EQ_INT(want, 6, "and the most cooling any of them asks for is what is left behind");
+    io_set_sysroot("");
+}
+
+static void t_a_map_with_several_devices_has_no_attributable_floor(void)
+{
+    struct surface s;
+    unsigned two[2] = { 4, 9 };
+    unsigned one[1] = { 4 };
+    int want = -1;
+
+    /* A map that binds more than one cooling device names each by phandle, and nothing
+     * reachable from a cooling_device says which phandle is its own - the directory holds
+     * cur_state, max_state and type, and no link to a device-tree node. So the entries
+     * cannot be told apart, and taking the first would leave the FAN at a floor belonging
+     * to a CPU or the GPU: 9 here, which this fan cannot even reach.
+     *
+     * The answer is to decline. Maximum cooling is what the caller already holds, so
+     * declining costs a fan that keeps running and risks nothing thermal. */
+    zone_as_shipped(&s);
+    remove_cooling_maps();
+    write_cooling_map_n("cpuss-0-0-thermal", "map-active", two, 2, 0);
+    io_set_sysroot(dir);
+    want = 7;
+    T_EQ_INT(fanown_release_mode(&s, "cpuss-0-0", 1, 40000, &want), FANOWN_LEAVE_MAX,
+             "two devices in one map: no floor can be attributed");
+    T_EQ_INT(want, -1, "so no state is named for the caller to write");
+
+    /* The positive control, and the reason this is not just a broken fixture: the same
+     * map with the second entry removed reads as a floor of 4. Without this, a reader that
+     * had stopped understanding cooling-maps altogether would pass the check above. */
+    remove_cooling_maps();
+    write_cooling_map_n("cpuss-0-0-thermal", "map-active", one, 1, 0);
+    want = -1;
+    T_EQ_INT(fanown_release_mode(&s, "cpuss-0-0", 1, 40000, &want), FANOWN_LEAVE_AS_IS,
+             "the same map with one entry still reads");
+    T_EQ_INT(want, 4, "and its floor is 4");
+
+    /* One unattributable map is enough to decide the whole zone, even beside a map that
+     * reads perfectly well. The highest-floor rule would otherwise answer from whichever
+     * maps happened to be legible, and that answer is not the zone's floor. */
+    write_cooling_map_n("cpuss-0-0-thermal", "map-active-2", two, 2, 0);
+    want = 7;
+    T_EQ_INT(fanown_release_mode(&s, "cpuss-0-0", 1, 40000, &want), FANOWN_LEAVE_MAX,
+             "a legible map beside an unattributable one does not rescue the zone");
+    T_EQ_INT(want, -1, "the zone has no floor to name");
+
+    /* A length that completes no entry decides the zone the same way, and for a reason
+     * worth separating: its first 12 bytes ARE a well-formed entry, so a reader that asks
+     * only for twelve readable bytes - which is exactly what this one used to ask for -
+     * takes a floor of 4 out of a property it does not understand. */
+    remove_cooling_maps();
+    write_cooling_map_n("cpuss-0-0-thermal", "map-active", one, 1, 5);
+    want = 7;
+    T_EQ_INT(fanown_release_mode(&s, "cpuss-0-0", 1, 40000, &want), FANOWN_LEAVE_MAX,
+             "a property of 17 bytes is not a cooling-map");
+    T_EQ_INT(want, -1, "and names no floor, though its first entry would have");
     io_set_sysroot("");
 }
 
@@ -345,6 +426,7 @@ int main(void)
     t_the_lowest_active_trip_is_the_one();
     t_release_without_information_leaves_maximum();
     t_the_floor_reader_takes_the_highest();
+    t_a_map_with_several_devices_has_no_attributable_floor();
 
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir);
     if (system(cmd) != 0)

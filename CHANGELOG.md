@@ -9,6 +9,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **A cooling map that binds several cooling devices yields no floor, instead of the first
+  entry's.** Handing a zone back to the kernel needs the state its own cooling map asks for,
+  and `cooling_map_lower()` read the first `<phandle, min, max>` entry of each map. With one
+  device per map — every map on this board — that is the fan's floor. With two it is a coin
+  toss: the entries name their devices by phandle, and on this kernel nothing reachable from
+  a cooling device identifies its device-tree node. Measured while closing this: the phandles
+  themselves are all there (851 of them under `/sys/firmware/devicetree/base`, and the
+  fixture's `0x1d4` resolves to the fan), but `/sys/class/thermal/cooling_device7` holds only
+  `cur_state`, `max_state`, `type`, `uevent`, `power/` and `stats/` — no `device` link, no
+  `of_node`. So the comparison the old comment proposed has nothing to compare against.
+
+  The floor is now reported unknown for such a zone, which the caller already reads as *leave
+  cooling at maximum* — the conservative end, costing a fan that keeps running. One
+  unattributable map decides the whole zone, even beside maps that read cleanly: the highest
+  of the legible floors is not the zone's floor. A property whose length completes no entry
+  is treated the same way rather than having its first 12 bytes read as a floor.
+
+  This was the only defect left open at `0.1.0`, parked because there was no way to exercise
+  a fix on hardware that cannot be in that shape. A synthetic device tree is the way: the
+  cells are 12 bytes each and a test writes as many as it likes.
+
+- **A check that passed for the wrong reason, found while writing the above.** The first
+  version rejected a ragged property with a modulo test and multi-entry maps with a length
+  test, and the test for the ragged case passed under a mutation that removed the modulo
+  test — because 17 bytes is also *longer than one entry*, so the other guard caught it. The
+  modulo test could never decide anything. One rule replaced both: exactly one entry, or no
+  floor.
+
+### Added
+
+- **`QCCTL_FANWD_INTERVAL_MS`**, beside the `QCCTL_FANWD_FORGET_MS` that was already there
+  for the tests. The fan watchdog's three mechanisms are a 60-second gate between
+  corrections, a cap at three, and an hour-long window after which the count is forgotten.
+  The gate and the window were covered; the cap was not, because reaching it meant two
+  60-second waits, and it was written down as untested rather than faked. With the gate
+  overridable it has a section of its own: three corrections, the third announcing itself as
+  the last, and a fourth stale state deliberately left where it is.
+
+- **33 behavioural checks** — 8 in `t_fanown.c`, 11 in `t_daemon.sh` (section C3), 14 in
+  `tests/sh/t_cli.sh`. Totals: **740** off hardware, 37 on it.
+
+  The `t_cli.sh` additions close `--status-file` as *this* binary's flag rather than the
+  daemon's: a capture with no published rpm, and one the sampler marks invalid, each have to
+  name the path they were given and not the compiled-in default. Their positive control is
+  indirect, and had to be — past that gate the capture takes the zone and dwells eight
+  seconds per fan state, so it is killed partway and judged by the `mode` it left behind.
+  Without that control, both refusals would pass for a binary that refuses every capture.
+
+### Changed
+
+- **A refusal test no longer depends on the refusal to terminate.** The two capture checks
+  above run under `timeout`, because the thing being refused is a two-minute action: when the
+  refusal was mutated away the test waited for the capture instead of failing. Same rule as
+  the `--zones` refusal in `qcstats` and the socket capacity tests — a check that hangs the
+  day it regresses is a check that will be deleted rather than read.
+
+---
+
 ## [0.1.0] - 2026-10-21
 
 ### Added
@@ -135,8 +197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client can make the daemon do and says nothing about taking up room. Measured: there is no
   idle timeout, so `CONTROL_MAXCLI` silent clients fill the slot table and a further
   `--cool-max` is accepted, closed without a reply, and gets no hold. An unprivileged process
-  can therefore stop another unprivileged process raising the fan. It is recorded in `TODO.md`
-  and pinned by a test rather than fixed: what is denied is the extra cooling, the kernel's
+  can therefore stop another unprivileged process raising the fan. It is stated in the
+  README's limitations and pinned by a test rather than fixed: what is denied is the extra cooling, the kernel's
   own governor runs underneath this path throughout and the socket cannot touch it, and every
   fix — an idle timeout, a per-uid quota — adds a way for a hold that is wanted to be dropped.
 
@@ -246,17 +308,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the cooling device's maximum, the status file reports the hold, the daemon logs the
   force, and when the client is signalled the hold ends and the curve has the fan back. One
   thing that test had to account for: the client's stdout is block-buffered when redirected,
-  so its whole account arrives at exit — recorded in `TODO.md` as a defect, since a command
-  whose purpose is to report a hold *while it lasts* should not be silent for the duration.
+  so its whole account arrived at exit. That is the defect fixed under *Fixed* below: a
+  command whose purpose is to report a hold *while it lasts* should not be silent for the
+  duration.
 
   Both files were shown to fail against mutated source rather than edited expectations: an
   unknown option returning 1 instead of 2, `--dry-run` performing its writes, `--csv`
   selecting the human format, and the socket accepting an unknown request.
 
   **These tests found three defects on their first run**, all of them in what the CLI says
-  rather than what it does, and all recorded in `TODO.md` rather than fixed in this entry:
-  `--reapply --query` announcing a re-apply it does not perform, `-m <profile> --query`
-  ignoring the apply with no message at all, and `--cool-max`'s buffering. None had been
+  rather than what it does, and all fixed under *Fixed* below: `--reapply --query` announcing
+  a re-apply it does not perform, `-m <profile> --query` ignoring the apply with no message
+  at all, and `--cool-max`'s buffering. None had been
   found by hand in the preceding week of hardware testing — the flags were exercised, but
   never in combination, and never with the output read back by something that cared.
 

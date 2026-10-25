@@ -12,6 +12,8 @@
 #include <string.h>
 
 #define THERMAL_DIR "/sys/class/thermal"
+/* One <phandle, min, max> entry of a cooling-map, in device-tree cells. */
+#define CMAP_CELL 12
 
 int fanown_take(struct fanown *fo, const struct surface *s,
                 const char *zone_name, const char *cdev_name,
@@ -114,8 +116,12 @@ int fanown_clear_point(const struct surface *s, const char *zone_name, long *out
 /* The cooling map's lower limit: the state the kernel itself brings this zone's fan to
  * when the active trip fires. sysfs exposes no thermal instance bounds, so it comes from
  * the device tree, where the property is <phandle, min, max> in big-endian cells. Returns
- * -1 if it cannot be read. Only the first cooling-device entry of each map is consulted;
- * matching several by phandle would need the cdev's own node, which is not needed here. */
+ * -1 if it cannot be read, which the caller reads as "leave cooling at maximum".
+ *
+ * A map may bind SEVERAL cooling devices, and then no entry can be attributed to the fan:
+ * each names its device by phandle, and nothing reachable from a cooling_device in sysfs
+ * identifies its device-tree node - measured. Reading the first entry would hand the fan a
+ * floor belonging to a CPU or the GPU, so such a zone is reported unknown instead. */
 static int cooling_map_lower(const struct zone *z)
 {
     char dir[PATH_MAXLEN], path[PATH_MAXLEN];
@@ -128,7 +134,8 @@ static int cooling_map_lower(const struct zone *z)
     if (!d)
         return -1;
     while ((e = readdir(d))) {
-        unsigned char cell[12];
+        unsigned char cell[CMAP_CELL + 1];      /* one byte more than an entry, to see it */
+        size_t n;
         FILE *f;
 
         if (e->d_name[0] == '.')
@@ -139,7 +146,17 @@ static int cooling_map_lower(const struct zone *z)
         f = fopen(path, "rb");
         if (!f)
             continue;
-        if (fread(cell, 1, sizeof cell, f) == sizeof cell) {
+        n = fread(cell, 1, sizeof cell, f);
+        fclose(f);
+        /* Exactly one entry, or this zone has no floor anyone can name - and one such map
+         * decides the zone, because the highest of the LEGIBLE floors is not the zone's
+         * floor. A length that completes no entry is refused for the same reason: its
+         * first 12 bytes read as a perfectly good state. */
+        if (n != CMAP_CELL) {
+            closedir(d);
+            return -1;
+        }
+        {
             long min = ((long)cell[4] << 24) | ((long)cell[5] << 16) |
                        ((long)cell[6] << 8)  | (long)cell[7];
             /* Highest floor wins: if several maps drive this zone, the most cooling any of
@@ -147,7 +164,6 @@ static int cooling_map_lower(const struct zone *z)
             if (min >= 0 && min <= 64 && min > lower)
                 lower = (int)min;
         }
-        fclose(f);
     }
     closedir(d);
     return lower;

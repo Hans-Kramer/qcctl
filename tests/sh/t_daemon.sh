@@ -152,8 +152,8 @@ t_ok "$?" "stops"
 #   the 60s gate between corrections - provoked below by asking for a second one at once
 #   the forget window, via QCCTL_FANWD_FORGET_MS, a hook built "for the tests" and until
 #     now used by none
-#   the cap at exactly three - NOT covered: three corrections need two 60s waits, and
-#     FANWD_INTERVAL_MS has no override. Written down rather than faked.
+#   the cap at exactly three - section C3, once QCCTL_FANWD_INTERVAL_MS existed to shorten
+#     the gate; at the shipped 60s it would have taken two minutes of waiting
 conf_without_strategy
 echo 8 > "$FAN/cur_state"
 echo enabled > "$ZONE/mode"
@@ -176,6 +176,43 @@ t_eq "$(grep -c 'fan was state' "$RT/log")" 1 "with no second correction logged"
 # is still 60s, so this asserts the FORGETTING, not another correction.
 sleep 3
 t_has "$(cat "$RT/log")" "correction(s) are forgotten" "the cap is forgotten after its window"
+stop
+t_ok "$?" "stops"
+echo enabled > "$ZONE/mode"
+
+# ---- C3: the cap is exactly three, and the third correction says so ----------------------
+# Only the GATE is shortened here. The cap, the counter and the message are the shipped
+# ones, and the forget window is left at its hour so nothing is forgotten mid-section -
+# which is also what makes this different from C2: there the count is dropped, here it is
+# reached. Four stale states are offered and the fourth must be left where it is.
+conf_without_strategy
+echo 8 > "$FAN/cur_state"
+echo enabled > "$ZONE/mode"
+QCCTL_FANWD_INTERVAL_MS=800 start "$(stream_of 33.0 33.0 33.0 33.0 33.0 33.0 33.0 33.0 \
+                                              33.0 33.0 33.0 33.0 33.0 33.0 33.0 33.0 \
+                                              33.0 33.0 33.0 33.0 33.0 33.0 33.0 33.0)"
+sleep 2
+t_eq "$(grep -c 'fan was state' "$RT/log")" 1 "with the gate shortened, one correction"
+
+echo 8 > "$FAN/cur_state"
+sleep 2
+t_file_is "$FAN/cur_state" 0 "a second stale state past the gate is corrected"
+t_eq "$(grep -c 'fan was state' "$RT/log")" 2 "twice"
+t_hasnt "$(cat "$RT/log")" "third time" "and nothing is said about a third yet"
+
+echo 8 > "$FAN/cur_state"
+sleep 2
+t_file_is "$FAN/cur_state" 0 "and so is a third"
+t_eq "$(grep -c 'fan was state' "$RT/log")" 3 "three times"
+t_has "$(cat "$RT/log")" "That is the third time" "which the daemon announces as the last"
+t_has "$(cat "$RT/log")" "not correcting it again" "saying what it will stop doing"
+
+# The fourth is the whole point of the cap: a state that keeps coming back is someone's
+# decision, and this daemon reports drift rather than fighting it.
+echo 8 > "$FAN/cur_state"
+sleep 2
+t_file_is "$FAN/cur_state" 8 "a fourth stale state is LEFT, because the cap is reached"
+t_eq "$(grep -c 'fan was state' "$RT/log")" 3 "with no fourth correction"
 stop
 t_ok "$?" "stops"
 echo enabled > "$ZONE/mode"

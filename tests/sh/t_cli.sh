@@ -30,10 +30,17 @@ cp -a "$FXSRC/." "$FX/"
 export QCCTL_SYSROOT=$FX
 
 MINFREQ=$FX/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq
+ZONE=$FX/sys/class/thermal/thermal_zone37
+FAN=$FX/sys/class/thermal/cooling_device7
 
 # run <args...> - output in $out, status in $rc. Both streams, because half the contract
 # here is which stream a refusal goes to and every refusal writes to stderr.
 run() { out=$("$BIN" "$@" 2>&1); rc=$?; }
+
+# As run(), but bounded. For the refusals whose subject is a long-running action: if the
+# refusal is ever lost, the binary must not be the thing that ends the test - a check that
+# depends on a refusal to terminate is a check that hangs the day it regresses.
+run_t() { out=$(timeout 10 "$BIN" "$@" 2>&1); rc=$?; }
 
 # Contents AND the listing. Contents alone miss a file that was created but left empty -
 # a stray staging artifact contributes no bytes to `cat` - and miss a deletion that takes
@@ -105,6 +112,10 @@ run --state
 t_eq "$rc" 2 "--state without a path exits 2"
 run --fan-baseline
 t_eq "$rc" 2 "--fan-baseline without a verb exits 2"
+run --control-socket
+t_eq "$rc" 2 "--control-socket without a path exits 2"
+run --status-file
+t_eq "$rc" 2 "--status-file without a path exits 2"
 
 run --fan-baseline sideways
 t_eq "$rc" 2 "--fan-baseline with a verb it does not have exits 2"
@@ -248,5 +259,58 @@ t_has "$out" "verified" "and read the restored values back"
 
 run --fan-baseline show --fan-baseline-file "$RT/nope"
 t_eq "$rc" 1 "--fan-baseline show of a missing file exits 1"
+
+# --- --status-file and --control-socket are qcctl's flags too --------------------------
+# Both spellings also exist on qcctld. Where the socket is concerned the client half is
+# already pinned hard by t_daemon.sh's section G - a hold placed through --control-socket on
+# a path the daemon was given, which cannot happen unless the client connects to exactly
+# that path - so what is missing here is --status-file, parsed by this binary and read by
+# nothing in the suite. The question is narrow - is qcctl's own copy honoured - and it is
+# answered by having it NAME the path it used, because a flag that is parsed and then
+# dropped names the compiled-in default instead.
+
+run_t --fan-baseline capture --status-file "$RT/no-status"
+t_eq "$rc" 1 "a capture with no published rpm exits 1"
+t_has "$out" "$RT/no-status" "and names the status file it was given"
+t_hasnt "$out" "/run/qcctl/status" "rather than the built-in default"
+
+# A status file that exists and says its own rpm is not to be trusted. The sampler's
+# validity flag decides this, not the number beside it - reading the number anyway is the
+# off-by-one recorded above status_fan_rpm(), and it refused a capture on hardware.
+printf '{"v":1,"temp_mc":34000,"fan_rpm_valid":false,"fan_rpm":2100}\n' > "$RT/untrusted"
+run_t --fan-baseline capture --status-file "$RT/untrusted"
+t_eq "$rc" 1 "an rpm the sampler marks invalid is refused"
+t_has "$out" "no trustworthy rpm" "though a plausible number is there to read"
+
+# The positive control, without which the two checks above would pass for a binary that
+# refuses every capture. It has to be indirect: past that gate the capture takes the zone
+# and dwells 8 seconds per fan state, so it is killed partway and judged by what it did to
+# the tree. Taking the zone is the first thing it does and it cannot be reached unless the
+# rpm from THIS path was accepted.
+printf '{"v":1,"temp_mc":34000,"fan_rpm_valid":true,"fan_rpm":0}\n' > "$RT/trusted"
+timeout 3 "$BIN" --fan-baseline capture --status-file "$RT/trusted" \
+    --fan-baseline-file "$RT/fb" >/dev/null 2>&1
+t_file_is "$ZONE/mode" disabled "a trustworthy rpm gets the capture past its pre-flight"
+# It was killed before its own release, so the fixture is put back by hand.
+echo enabled > "$ZONE/mode"
+echo 0 > "$FAN/cur_state"
+
+# --cool-max asks a running daemon before doing anything itself, so the socket it tried is
+# named in the refusal. What that pins is the message, not the connect target: the two read
+# the variable independently, and section G is what holds the connect honest.
+# QCCTL_SYSROOT has to come OFF: with it set, qcctl is permitted to drive the fan directly
+# and would block holding it instead of refusing.
+if [ "$(id -u)" != 0 ]; then
+    out=$(env -u QCCTL_SYSROOT "$BIN" --cool-max --control-socket "$RT/no-sock" 2>&1); rc=$?
+    t_eq "$rc" 1 "--cool-max with no daemon to ask, and no privilege of its own, exits 1"
+    t_has "$out" "$RT/no-sock" "and names the socket it tried"
+    t_hasnt "$out" "/run/qcctl/control" "rather than the built-in default"
+fi
+# As root that path holds the fan instead of refusing, so the socket flag is pinned here by
+# the half that is true either way: it is parsed, and it takes the next argument.
+run --cool-max --control-socket "$RT/no-sock" --reset
+t_eq "$rc" 2 "--control-socket is a flag with an argument, not an unknown option"
+t_has "$out" "cannot be combined" "so the refusal is the one about --reset"
+t_hasnt "$out" "unknown option" "and nothing went unparsed"
 
 t_summary
