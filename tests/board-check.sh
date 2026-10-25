@@ -289,12 +289,38 @@ s_install() {
     sh "${STAGE:-/tmp/stage}/install.sh" >/dev/null 2>&1
     sleep 4
     eq "$(systemctl is-active qcctld)" active "the reinstall brings the unit back"
-    # polkit is OPTIONAL - install.sh warns and carries on without /usr/share/polkit-1/actions
-    # - so a fixed count would fail a correct install on an image that lacks it.
-    want_owned=15
-    [ -d /usr/share/polkit-1/actions ] || want_owned=14
-    eq "$(grep -c '^OWNED' /var/lib/qcctl/install.manifest)" "$want_owned" \
-       "with every path recorded"
+    # The SET, not a count. A count was here and it was wrong twice over: polkit is optional,
+    # so an image without /usr/share/polkit-1/actions installs correctly with one path fewer,
+    # and qcstats is OWNED only when this installer placed it - a board that already has one
+    # from its own release gets PREEXISTING and no OWNED entry at all. Both of those are
+    # properties of the machine, not of the installer, and a number that moves with the
+    # machine fails a correct install. The two optional paths are checked separately below.
+    manifest=/var/lib/qcctl/install.manifest
+    missing=
+    for p in /etc/systemd/system/qcctld.service /etc/systemd/system/qcctl-resume.service \
+             /usr/sbin/qcctld /usr/sbin/qcctl /usr/sbin/qcctl-surface-dump \
+             /usr/sbin/qcctl-fan-release /usr/sbin/qcctl-uninstall /usr/sbin/qcctl-check \
+             /usr/share/doc/qcctl /usr/share/doc/qcctl/USAGE.md \
+             /usr/share/man/man8/qcctl.8 /usr/share/man/man8/qcctld.8 \
+             /etc/qcctl/fan.config.dist /etc/qcctl/profiles.conf.dist /var/lib/qcctl; do
+        grep -qx "OWNED $p" "$manifest" || missing="$missing $p"
+    done
+    eq "$missing" "" "every path this installer always owns is recorded"
+    if [ -d /usr/share/polkit-1/actions ]; then
+        grep -q '^OWNED /usr/share/polkit-1/actions/' "$manifest" \
+            && ok "and the polkit action, which this image has" \
+            || bad "polkit actions exist here but no action is recorded"
+    else
+        skip_ "no /usr/share/polkit-1/actions on this image, so no action to record"
+    fi
+    # qcstats either way, but it must be ONE of the two and never neither: the daemon cannot
+    # run without it, and a manifest that mentions it nowhere means nobody is accountable
+    # for the copy on disk.
+    if grep -q '/qcstats$' "$manifest"; then
+        ok "qcstats is accounted for ($(awk '/\/qcstats$/{print $1, $2}' "$manifest"))"
+    else
+        bad "qcstats appears in the manifest neither as OWNED nor as PREEXISTING"
+    fi
     # And each recorded path is really there, which a count alone does not say.
     # A manifest line is "<KIND> <path>"; only the OWNED ones are this installer's own.
     missing=0

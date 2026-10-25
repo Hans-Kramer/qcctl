@@ -28,17 +28,10 @@ source and not yet confirmed on hardware.
   does not ship behaviour it cannot demonstrate. Revisit when it resumes, or when `rtcwake`
   is shown to wake it. **[measured]**
 
-- **No `CapabilityBoundingSet=` on `qcctld.service`.** `ProtectKernelTunables=` and
-  `ProtectSystem=strict` would break a daemon whose job is writing `/sys`, but the
-  capability set is a free restriction left on the table. Needs an install cycle on the
-  board to prove the daemon still writes, binds its socket and creates its runtime
-  directory.
-
 ## Known, and not a gap
 
-- **The gate does not run the hardware checks, and cannot.** `tests/board-check.sh` is 37
+- **The gate does not run the hardware checks, and cannot.** `tests/board-check.sh` is 39
   checks that need a thermal governor reacting to a real temperature, a fan that turns, and
   a driver that clamps — none of which a runner has. It is a release step run by hand, and
-  nothing reminds anyone to run it. Last green **2026-10-21** (37 ok, 7m43s, staged
-  `aarch64` build), which was before the fan watchdog and the cooling-map reader changed, so
-  that run no longer describes this tree. **[measured]**
+  nothing reminds anyone to run it. Last green **2026-10-25** (39 ok, 9m21s, native build
+  on the board), which is this tree. **[measured]**

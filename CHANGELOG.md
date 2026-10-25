@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`board-check.sh` asserted a manifest *count*, which moves with the machine.** It wanted
+  15 OWNED paths, and the number was wrong in two independent ways: polkit is optional, so
+  an image without `/usr/share/polkit-1/actions` installs correctly with one path fewer, and
+  `qcstats` is OWNED only when this installer placed it - a board that already has one from
+  its own release gets `PREEXISTING` and no OWNED entry at all. Both are properties of the
+  machine, not of the installer, so a correct install could fail the check. It now asserts
+  the **set**: every path this installer always owns is recorded, the polkit action is
+  recorded where the image has one and skipped where it does not, and `qcstats` must appear
+  as *one* of OWNED or PREEXISTING - never neither, because a manifest that mentions it
+  nowhere means nobody is accountable for the copy on disk. 39 checks now, up from 37.
+
+  The board this ran on answers the question the count was hiding:
+  `PREEXISTING /usr/local/bin/qcstats`. `install.sh` resolves its dependency with
+  `command -v qcstats`, found the released binary ahead of its own `/usr/bin` copy, judged
+  it not ours and left it alone - and the daemon samples with it.
+
 - **`tests/sh/t_install.sh` could run its sandbox half against a live system, and did.**
   That half installs `qcctl` for real, writes `/run`, and puts a stub `systemctl` on
   `PATH`; its only protection was the `QCCTL_TEST_SANDBOX` variable the container run sets,
@@ -77,6 +93,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floor.
 
 ### Added
+
+- **`CapabilityBoundingSet=` on `qcctld.service`, and it is empty.** Not a shortened list -
+  none at all. Everything this daemon does privileged, it does as the *owner* of the file:
+  every control point is 0644 root:root, sysfs attributes and the two
+  `sched_util_clamp` sysctls alike, so the write comes from the owner bits and no capability
+  is consulted. Nothing here chowns, mounts, changes uid, raises a scheduling class or
+  opens a device it does not own. It bounds the `qcstats` child by inheritance too, which is
+  why the daemon's sampler command carries neither `--gpu-busy` nor `--npu`: those want
+  tracefs and the FastRPC device.
+
+  Verified on hardware rather than argued: the running daemon reports
+  `CapEff: 0000000000000000` and `CapBnd: 0000000000000000`, its sampler child the same, and
+  `tests/board-check.sh` then passed all 39 checks against that install - profile applies
+  and read-backs, the fan watchdog correcting a hand-written state, zone ownership taken and
+  handed back, the 0666 socket, the runtime directory, and a full
+  uninstall/reinstall cycle. `ProtectKernelTunables=` and `ProtectSystem=strict` remain the
+  two that would break it, for the obvious reason.
 
 - **Man pages: `qcctl.8` and `qcctld.8`, installed with the program.** A tool in
   `/usr/sbin` with no man page is one whose options can only be learned by running it, and

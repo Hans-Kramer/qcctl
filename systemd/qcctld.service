@@ -25,6 +25,20 @@ Restart=on-failure
 RestartSec=5
 # Needs root: every control point is 644 root:root.
 User=root
+# And needs NO capabilities, which is why this is empty rather than a list. Everything it
+# does privileged, it does as the OWNER of the file: every control point is 0644 root:root -
+# sysfs attributes and the two sched_util_clamp sysctls alike - so the write comes from the
+# owner bits and no capability is consulted. Nothing here chowns, mounts, changes uid,
+# raises a scheduling class or opens a device it does not own.
+#
+# This bounds the qcstats child too, by inheritance. That is deliberate and it is why the
+# daemon's sampler command carries neither --gpu-busy nor --npu: those would need tracefs
+# and the FastRPC device, which is not ours and would want CAP_DAC_OVERRIDE.
+#
+# ProtectKernelTunables= and ProtectSystem=strict are the two that WOULD break it, for the
+# obvious reason: writing /sys and /proc/sys is the job. The capability set is free.
+# Verified on hardware rather than assumed - tests/board-check.sh is the proof.
+CapabilityBoundingSet=
 # Writes only to sysfs and its own state.
 ProtectHome=yes
 PrivateTmp=yes
