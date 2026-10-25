@@ -1,0 +1,215 @@
+.\" SPDX-License-Identifier: CC-BY-4.0
+.\" SPDX-FileCopyrightText: Copyright (c) 2026 Hans Kramer
+.TH QCCTLD 8 "2026-10-25" "qcctl" "System Administration"
+.SH NAME
+qcctld \- qcctl daemon: profile drift watch, fan strategy, status publisher
+.SH SYNOPSIS
+.B qcctld
+.RI [ options ]
+.SH DESCRIPTION
+.B qcctld
+is
+.BR always " resident,"
+whether or not a fan strategy is configured. Applying a profile is something it does at
+startup, not its reason to exist. It runs under systemd as
+.IR qcctld.service ,
+which passes
+.BR \-\-foreground .
+.PP
+It owns the
+.B single
+.BR qcstats (1)
+instance: two samplers would mean two observer effects on the quantity being reported.
+Everything it decides comes from that one stream, read as NDJSON over a pipe.
+.PP
+What it does, continuously:
+.TP
+\(bu
+.B Watches the applied profile for drift,
+re\-checking every
+.B \-\-drift\-interval
+milliseconds that each applied setting still reads back as it was asked for. Something
+else on the system moving a clock is reported rather than silently corrected.
+.TP
+\(bu
+.B Runs the fan strategy
+from
+.IR /etc/qcctl/fan.config ,
+if the profile in force hands the fan over. Ownership is taken through the thermal
+zone's
+.I mode
+attribute \- never by writing PWM \- so the kernel's own protections stay underneath at
+all times. The ceiling at 85 degrees is not configurable.
+.TP
+\(bu
+.B Publishes a status snapshot
+to
+.B \-\-status\-file
+for anything that wants to display state, and the active profile name to
+.BR \-\-active\-file .
+.TP
+\(bu
+.B Serves the control socket,
+mode 0666 so that any local user can reach it. Its vocabulary is the restriction: a
+client can ask to
+.I raise
+cooling and nothing else. It cannot lower cooling, release the zone, or change a
+profile. See
+.B \-\-cool\-max
+in
+.BR qcctl (8).
+.TP
+\(bu
+.B Judges airflow
+against
+.IR /var/lib/qcctl/fan-baseline ,
+when one has been captured and
+.IR fan.config 's
+.B < AIRFLOW >
+block names a delta.
+.PP
+If the sampler dies the fan is released
+.B first
+and the sampler then retried: a strategy cannot be driven without temperatures, and
+holding the zone while blind is the one thing it must never do. If the retries are
+exhausted it exits non\-zero so that systemd restarts the unit \- in\-process retries
+handle a hiccup, systemd handles a persistent fault.
+.SH OPTIONS
+.TP
+.BI \-c " path" "\fR, \fP" \-\-config " path"
+Profiles. Default
+.IR /etc/qcctl/profiles.conf .
+.TP
+.BI \-\-fan\-config " path"
+Fan strategy. Default
+.IR /etc/qcctl/fan.config .
+.TP
+.BI \-\-state " path"
+Boot\-state snapshot. Default
+.IR /var/lib/qcctl/boot-state .
+.TP
+.BI \-\-pidfile " path"
+Default
+.IR /run/qcctl/pid .
+.TP
+.BI \-\-status\-file " path"
+Where the status snapshot is published. Default
+.IR /run/qcctl/status .
+.TP
+.BI \-\-control\-socket " path"
+Where unprivileged clients ask for cooling. Default
+.IR /run/qcctl/control .
+.TP
+.BI \-\-fan\-baseline\-file " path"
+The captured rpm\-per\-state reference. Default
+.IR /var/lib/qcctl/fan-baseline .
+.TP
+.BI \-\-active\-file " path"
+Where the active profile name is recorded, for the resume hook to read. Default
+.IR /run/qcctl/active .
+.TP
+.BI \-\-selection\-file " path"
+The operator's recorded choice, honoured on a restart. Scoped to the boot id: a power
+cycle returns to the DEFAULT profile. Default
+.IR /var/lib/qcctl/selected .
+.TP
+.BI \-\-drift\-interval " ms"
+How often to re\-check that the applied profile still holds. Default 10000.
+.TP
+.BR \-m ", " \-\-mode " " \fIname\fR|\fIid\fR
+Profile to apply at startup. Default: the profile marked DEFAULT.
+.TP
+.B \-\-no\-apply
+Run the fan strategy only; do not apply a profile.
+.TP
+.B \-\-oneshot
+Apply, then exit without running a strategy. Implies
+.BR \-\-foreground .
+.TP
+.B \-\-foreground
+Stay in the foreground and log to stdout, which is what the unit passes. The default is
+to detach once the pidfile is held, and log to syslog.
+.TP
+.BI \-\-stats\-cmd " cmd"
+Override the sampler command. Exists for the tests, which feed a canned NDJSON stream
+instead of running
+.BR qcstats (1).
+.TP
+.BR \-V ", " \-\-version
+Print the version and exit.
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit.
+.SH SIGNALS
+.TP
+.BR SIGTERM ", " SIGINT ", " SIGHUP
+Stop at the next loop iteration, releasing the fan and handing the zone back to the
+kernel on the way out. The state it leaves is either 0 or the cooling map's own floor,
+which is what the governor would hold there.
+.TP
+.B SIGPIPE
+Ignored: the sampler dying must not kill the daemon.
+.PP
+.I qcctld.service
+also carries
+.B ExecStopPost=qcctl-fan-release
+as a backstop, for the stop this process did not get to handle itself \-
+.BR SIGKILL ,
+or a crash.
+.SH FILES
+.TP
+.I /etc/systemd/system/qcctld.service
+The unit.
+.B Restart=on-failure
+with
+.BR RestartSec=5 .
+.TP
+.I /etc/qcctl/profiles.conf
+.TQ
+.I /etc/qcctl/fan.config
+Configuration; see
+.BR qcctl (8).
+.TP
+.I /var/lib/qcctl/boot-state
+.TQ
+.I /var/lib/qcctl/selected
+.TQ
+.I /var/lib/qcctl/fan-baseline
+State that survives a restart.
+.TP
+.I /run/qcctl/
+.IR pid ", " active ", " status " and " control ,
+all created at startup.
+.SH ENVIRONMENT
+.TP
+.B QCCTL_SYSROOT
+Read and write under this directory instead of
+.IR / .
+.B Not for production use;
+see
+.BR qcctl (8).
+.TP
+.B QCCTL_SAMPLER_RETRY_MS
+.TQ
+.B QCCTL_FANWD_INTERVAL_MS
+.TQ
+.B QCCTL_FANWD_FORGET_MS
+Shorten the sampler retry delay, the fan watchdog's interval, and its forget window.
+These exist so the tests can reach behaviour that otherwise takes minutes of wall clock,
+and are documented here because a reader of the journal may see their effect.
+.SH EXIT STATUS
+.TP
+.B 0
+Asked to stop, and stopped.
+.TP
+.B non-zero
+A fault systemd should act on \- the configuration did not parse or apply, the pidfile
+could not be held, or the sampler could not be recovered.
+.SH SEE ALSO
+.BR qcctl (8),
+.BR qcstats (1)
+.PP
+.I /usr/share/doc/qcctl/USAGE.md
+documents the configuration formats and how to read the status output.
+.SH AUTHOR
+Hans Kramer.

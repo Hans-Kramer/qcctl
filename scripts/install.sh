@@ -93,7 +93,7 @@ note "1. pre-flight"
 command -v systemctl >/dev/null 2>&1 || die "systemd not present"
 for f in qcctld qcctl qcstats qcctl-surface-dump profiles.conf fan.config \
          qcctld.service qcctl-resume.service fan-release.sh uninstall.sh \
-         io.github.hans_kramer.qcctl.policy USAGE.md; do
+         io.github.hans_kramer.qcctl.policy USAGE.md qcctl.8 qcctld.8; do
     [ -f "$SRC/$f" ] || die "staging incomplete: $SRC/$f is missing"
 done
 # The binaries must be built for THIS machine. A silently x86 binary installs cleanly and
@@ -229,6 +229,12 @@ run install -d -o root -g root -m 0755 /usr/share/doc/qcctl
 # removes OWNED paths longest-first, so the file goes before the directory holding it.
 record OWNED /usr/share/doc/qcctl
 put 0644 "$SRC/USAGE.md" /usr/share/doc/qcctl/USAGE.md
+# Man pages. Section 8 for both: they are in /usr/sbin. The man1/man8 DIRECTORIES are
+# deliberately NOT recorded - they belong to the filesystem, not to us, and an uninstall
+# that removed them would take every other package's pages with them.
+run install -d -o root -g root -m 0755 /usr/share/man/man8
+put 0644 "$SRC/qcctl.8"  /usr/share/man/man8/qcctl.8
+put 0644 "$SRC/qcctld.8" /usr/share/man/man8/qcctld.8
 
 # for the daemon or the CLI to work, and deliberately NOT used by --cool-max, which needs
 # no privilege at all.

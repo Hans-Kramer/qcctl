@@ -78,6 +78,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Man pages: `qcctl.8` and `qcctld.8`, installed with the program.** A tool in
+  `/usr/sbin` with no man page is one whose options can only be learned by running it, and
+  `qcctld`'s were worse than unlisted - its flags are the ones nobody types, because systemd
+  does. Section 8 for both, since that is where a `/usr/sbin` program's page belongs;
+  `man qcctl` finds it regardless. They carry the flags, the 0/1/2/3/4 exit-status contract
+  and why those four are distinct, every file either program reads or writes, the signals
+  `qcctld` handles and what each leaves the fan at, and the three `QCCTL_*` test hooks -
+  documented because a reader of the journal can see their effect. `docs/USAGE.md` stays the
+  long form and the pages say so.
+
+  Installing them is three edits beyond writing them, which is the part that needed care:
+  `make stage` and `make stage-native` copy them, `install.sh` adds them to its staging
+  pre-flight and records each with `put`, and `uninstall.sh` adds them to the `KNOWN`
+  fallback list. The `man8` *directory* is deliberately not recorded: it belongs to the
+  filesystem, and an uninstall that removed it would take every other package's pages with
+  it.
+
+  `tests/sh/t_install.sh` needed one line - the two paths added to `DESTS` - and then
+  checked the rest by itself. Proven by mutation at all three links: a page staged but not
+  installed reddens as `MISSING`, one installed but not recorded reddens as `UNRECORDED`
+  *and* as a path a plain uninstall leaves behind, and one never staged kills the install at
+  its pre-flight. The gate's `OWNED ⊆ KNOWN` check now compares 17 paths instead of 15, and
+  was shown to fail with either page dropped from the list.
+
 - **The gate runs `make test` as root, on x86-64 and on `aarch64`.** Root is the uid that
   ships and it was the one uid nothing ever executed; a suite that passes only for
   unprivileged callers is not covering the daemon. The root pass runs second and hands the

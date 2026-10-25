@@ -1,0 +1,215 @@
+.\" SPDX-License-Identifier: CC-BY-4.0
+.\" SPDX-FileCopyrightText: Copyright (c) 2026 Hans Kramer
+.TH QCCTL 8 "2026-10-25" "qcctl" "System Administration"
+.SH NAME
+qcctl \- apply power, clock and fan profiles on an Arduino Ventuno Q
+.SH SYNOPSIS
+.B qcctl
+.RI [ options ]
+.SH DESCRIPTION
+.B qcctl
+sets CPU, GPU and thermal policy on an Arduino Ventuno Q (Qualcomm QCS8275 /
+Dragonwing IQ\-8275) from named profiles in
+.IR /etc/qcctl/profiles.conf .
+It is the acting half of a pair:
+.BR qcstats (1)
+observes and
+.B qcctl
+acts. It contains no monitoring code and never reads a sensor directly \- a running
+.BR qcctld (8)
+owns the single sampler, and this command reads what the daemon publishes.
+.PP
+Applying a profile is
+.BR idempotent :
+settings the previous profile owned and the new one does not mention are reverted to
+the saved boot state, so the result depends on which profile is applied and not on the
+order profiles were applied in. What was reverted is reported rather than implied.
+.PP
+A profile is applied
+.B whole or not at all.
+If a write fails partway, the writes already made are rolled back: leaving the machine
+in a state no configuration describes is worse than failing.
+.PP
+Most operations write to
+.I /sys
+and need root.
+.BR \-\-query ,
+.BR \-\-list
+and
+.B \-\-cool\-max
+do not \-
+.B \-\-cool\-max
+asks the daemon over a socket that can only ever
+.I raise
+cooling.
+.SH OPTIONS
+.TP
+.BR \-q ", " \-\-query
+Report the current state and exit.
+.TP
+.BR \-l ", " \-\-list
+List the profiles in the configuration.
+.TP
+.BR \-m ", " \-\-mode " " \fIname\fR|\fIid\fR
+Apply a profile.
+.TP
+.B \-\-dry\-run
+With
+.BR \-m :
+print the writes and perform none.
+.TP
+.B \-\-reset
+Restore the saved boot state.
+.TP
+.B \-\-save\-state
+Capture the current state as the restore point.
+.TP
+.B \-\-verify
+Parse and validate the configuration, then plan every profile against the running
+kernel, and exit. The second half is what catches a well\-formed file that names a
+control this kernel does not expose; see
+.BR "EXIT STATUS" .
+.TP
+.B \-\-reapply
+Re\-apply the profile named in the active file. Used by the resume hook, and a no\-op
+when no profile is in force.
+.TP
+.B \-\-allow\-disruptive
+Permit settings whose effect is drastic. Currently only offlining cpu0, the boot CPU.
+.TP
+.B \-\-json
+Machine\-readable output for
+.B \-q
+and
+.BR \-l .
+Consumers must use this and never the human layout.
+.TP
+.B \-\-fan\-baseline capture|show
+Capture this board's healthy rpm\-per\-state reference, or print the stored one. A
+capture drives the fan and takes about two minutes;
+.B \-\-force
+accepts values that look obstructed. The delta that judges against the reference lives
+in the
+.B < AIRFLOW >
+block of
+.IR /etc/qcctl/fan.config .
+.TP
+.B \-\-cool\-max
+Run the fan at full speed until stopped with Ctrl\-C or
+.BR SIGTERM .
+Needs no privilege while
+.BR qcctld (8)
+is running, because it asks the daemon rather than driving the fan itself.
+.TP
+.BI \-c " path" "\fR, \fP" \-\-config " path"
+Profiles file. Default
+.IR /etc/qcctl/profiles.conf .
+.TP
+.BI \-\-state " path"
+Boot\-state snapshot. Default
+.IR /var/lib/qcctl/boot-state .
+.TP
+.BI \-\-active\-file " path"
+Default
+.IR /run/qcctl/active .
+.TP
+.BI \-\-selection\-file " path"
+Where
+.B \-m
+records the operator's choice, so that a daemon restart honours it instead of
+reverting to the DEFAULT profile. Scoped to the boot id: a power cycle returns to
+DEFAULT. Default
+.IR /var/lib/qcctl/selected .
+.TP
+.BI \-\-status\-file " path"
+Where to read the daemon's published temperature, for
+.BR \-\-cool\-max 's
+handback decision. Default
+.IR /run/qcctl/status .
+.TP
+.BR \-V ", " \-\-version
+Print the version and exit.
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+The operation was refused or could not be completed \- no daemon to ask for
+.BR \-\-cool\-max ,
+a write that failed and was rolled back.
+.TP
+.B 2
+Usage error, or a configuration file that does not parse. Fix the syntax at the
+reported line.
+.TP
+.B 3
+The file parses but is not a usable configuration: a bad setting, or no profile marked
+DEFAULT. Fix what the message names.
+.TP
+.B 4
+The file is
+.BR fine ;
+this kernel does not expose something it names. Not a configuration bug \- the board
+changed under the file, typically after a kernel update.
+.PP
+2, 3 and 4 are kept distinct because they call for different fixes, and
+.I install.sh
+treats 4 separately so that an install after a kernel bump does not send anyone hunting
+a syntax error that is not there.
+.SH FILES
+.TP
+.I /etc/qcctl/profiles.conf
+The profiles. Settings are user\-authored: unset is not the same as a default, and
+units are mandatory.
+.TP
+.I /etc/qcctl/fan.config
+Fan strategy \- one
+.B < CURVE >
+(open loop, a temperature\-to\-state lookup with hysteresis) or
+.B < TARGET >
+(closed loop, a temperature to hold) \- and the
+.B < AIRFLOW >
+block.
+.TP
+.I /etc/qcctl/*.dist
+Reference copies of what this release ships, for comparison against yours.
+.TP
+.I /var/lib/qcctl/boot-state
+What the machine looked like before anything was applied;
+.B \-\-reset
+restores this.
+.TP
+.I /var/lib/qcctl/fan-baseline
+Measured rpm per fan state. Data, not configuration \- do not hand\-edit it.
+.TP
+.I /var/lib/qcctl/install.manifest
+Every path the installer created, and what it did with each.
+.TP
+.I /run/qcctl/status
+.TQ
+.I /run/qcctl/active
+.TQ
+.I /run/qcctl/control
+Published by the daemon; see
+.BR qcctld (8).
+.SH ENVIRONMENT
+.TP
+.B QCCTL_SYSROOT
+Read and write under this directory instead of
+.IR / ,
+so the tests can drive the whole program against a captured tree. Setting it also
+relaxes the privilege check, because nothing it can reach is the real system.
+.B Not for production use.
+.SH SEE ALSO
+.BR qcctld (8),
+.BR qcstats (1)
+.PP
+.I /usr/share/doc/qcctl/USAGE.md
+documents every command in full, both configuration formats, and how to read the
+status output.
+.SH AUTHOR
+Hans Kramer.

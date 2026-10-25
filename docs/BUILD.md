@@ -175,5 +175,5 @@ etc/        profiles.conf, fan.config
 systemd/    the unit and the resume hook
 polkit/     the action that lets an unprivileged GUI switch profiles
 scripts/    install.sh, uninstall.sh, fan-release.sh
-docs/       BUILD.md, USAGE.md
+docs/       BUILD.md, USAGE.md, qcctl.8, qcctld.8
 ```

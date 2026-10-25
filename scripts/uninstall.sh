@@ -75,6 +75,8 @@ KNOWN="/etc/systemd/system/qcctld.service
 /usr/share/polkit-1/actions/io.github.hans_kramer.qcctl.policy
 /usr/share/doc/qcctl/USAGE.md
 /usr/share/doc/qcctl
+/usr/share/man/man8/qcctl.8
+/usr/share/man/man8/qcctld.8
 /etc/qcctl/fan.config.dist
 /etc/qcctl/profiles.conf.dist
 /var/lib/qcctl"

@@ -97,6 +97,8 @@ instance — two samplers would mean two observer effects on the quantity being 
 
 ## Documentation
 
+- `man qcctl` and `man qcctld` — the flags, the exit-status contract, and every file
+  either one touches. Installed with the program
 - [`docs/BUILD.md`](docs/BUILD.md) — compiling, cross-compiling, the test suite, installing
 - [`docs/USAGE.md`](docs/USAGE.md) — every command, both config formats, and how to read the
   status

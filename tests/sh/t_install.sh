@@ -99,6 +99,7 @@ DESTS="/usr/sbin/qcctld /usr/sbin/qcctl /usr/sbin/qcctl-surface-dump
 /usr/sbin/qcctl-fan-release /usr/sbin/qcctl-uninstall /usr/sbin/qcctl-check /usr/bin/qcstats
 /etc/systemd/system/qcctld.service /etc/systemd/system/qcctl-resume.service
 /usr/share/doc/qcctl/USAGE.md /usr/share/polkit-1/actions/io.github.hans_kramer.qcctl.policy
+/usr/share/man/man8/qcctl.8 /usr/share/man/man8/qcctld.8
 /etc/qcctl/fan.config.dist /etc/qcctl/profiles.conf.dist"
 
 in_manifest() {  # in_manifest <path>

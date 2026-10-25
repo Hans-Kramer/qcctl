@@ -151,7 +151,7 @@ stage:
 	 cp systemd/qcctld.service systemd/qcctl-resume.service $(STAGE)/ && \
 	 cp polkit/io.github.hans_kramer.qcctl.policy $(STAGE)/ && \
 	 cp scripts/install.sh scripts/uninstall.sh scripts/fan-release.sh $(STAGE)/ && \
-	 cp docs/USAGE.md $(STAGE)/ && \
+	 cp docs/USAGE.md docs/qcctl.8 docs/qcctld.8 $(STAGE)/ && \
 	 cp $(QCSTATS) $(STAGE)/ || { \
 	    $(MAKE) --no-print-directory clean >/dev/null; \
 	    $(MAKE) --no-print-directory all >/dev/null; \
@@ -197,7 +197,7 @@ stage-native: all
 	 cp systemd/qcctld.service systemd/qcctl-resume.service $(STAGE)/ && \
 	 cp polkit/io.github.hans_kramer.qcctl.policy $(STAGE)/ && \
 	 cp scripts/install.sh scripts/uninstall.sh scripts/fan-release.sh $(STAGE)/ && \
-	 cp docs/USAGE.md $(STAGE)/ && \
+	 cp docs/USAGE.md docs/qcctl.8 docs/qcctld.8 $(STAGE)/ && \
 	 cp $(QCSTATS) $(STAGE)/ || { \
 	    rm -rf $(STAGE); \
 	    echo "stage-native: could not stage a file - removed $(STAGE)"; \
