@@ -13,6 +13,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tests/sh/t_install.sh` could run its sandbox half against a live system, and did.**
+  That half installs `qcctl` for real, writes `/run`, and puts a stub `systemctl` on
+  `PATH`; its only protection was the `QCCTL_TEST_SANDBOX` variable the container run sets,
+  plus a uid check that *permits* root - the one user able to do the damage. During this
+  work it was run as root on the development board with that variable exported, and it did
+  what it does in a throwaway root: installed, then uninstalled. It removed every `qcctl`
+  binary, `/etc/qcctl`, both unit files and `/var/lib/qcctl` - boot-state snapshot and fan
+  baseline included - and left the stub `systemctl` shadowing the real one. The board was
+  never thermally at risk: the uninstaller left the zone `enabled` with the kernel holding
+  the fan, which is the behaviour `tests/board-check.sh` asserts.
+
+  It now refuses unless `/run/systemd/system` is absent. The container has no systemd as
+  PID 1; every machine this could wreck does. An exported variable is not a safety
+  mechanism, and a uid check that permits root is not one either.
+
+- **The suite had never been run as the uid the daemon runs as, and failed when it was.**
+  `qcctld` runs as root. Run as root, `tests/t_commit.c` reported seven failures against
+  correct code: both of its refusal cases induce the refusal with `chmod` - `0444` for a
+  write that must fail, `0200` for a prior value that cannot be read - and a caller holding
+  `CAP_DAC_OVERRIDE` ignores mode bits entirely, so the write succeeded, nothing rolled
+  back, and the "unreadable" node read fine.
+
+  The premise was wrong rather than the numbers: real sysfs refuses a write to a `0444`
+  attribute *whatever the uid*, because kernfs checks the mode itself, while a plain file in
+  a fixture obeys DAC and lets root override it. A fixture cannot imitate that with mode
+  bits alone. So the two cases now drop `CAP_DAC_OVERRIDE` and `CAP_DAC_READ_SEARCH` before
+  they begin (`bind_to_mode_bits()`, 25 lines of `capget`/`capset`, no new dependency), and
+  the kernel refuses them for the same reason the board would. Where the drop cannot be
+  made the cases fail with that as the reason instead of asserting nothing.
+
+  Proven on the board at both uids, and proven still able to catch the defect it exists for:
+  with `apply_rollback()`'s call deleted, "the write BEFORE the failure is undone" reddens
+  **as root**, where before the fix that mutation changed nothing because the write it was
+  meant to roll back had succeeded.
+
 - **A cooling map that binds several cooling devices yields no floor, instead of the first
   entry's.** Handing a zone back to the kernel needs the state its own cooling map asks for,
   and `cooling_map_lower()` read the first `<phandle, min, max>` entry of each map. With one
@@ -42,6 +77,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   floor.
 
 ### Added
+
+- **The gate runs `make test` as root, on x86-64 and on `aarch64`.** Root is the uid that
+  ships and it was the one uid nothing ever executed; a suite that passes only for
+  unprivileged callers is not covering the daemon. The root pass runs second and hands the
+  build directory back afterwards, so nothing it rebuilds is left root-owned for the steps
+  that follow.
 
 - **`QCCTL_FANWD_INTERVAL_MS`**, beside the `QCCTL_FANWD_FORGET_MS` that was already there
   for the tests. The fan watchdog's three mechanisms are a 60-second gate between

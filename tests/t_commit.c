@@ -12,8 +12,14 @@
 // revert-on-switch mechanism, and for the boot-id scoping of a saved selection.
 //
 // A write is made to fail the way the kernel fails one: the target is there, was readable
-// when the plan was built, and refuses the open. chmod 0444 produces exactly that, which is
-// also what a read-only sysfs attribute does to a caller that planned against it.
+// when the plan was built, and refuses the open. A read-only sysfs attribute does that to
+// any caller - kernfs checks the mode itself, so even root is refused - and chmod 0444 on a
+// fixture file reproduces it for everyone EXCEPT root, who overrides DAC and sails through.
+//
+// That is not a detail: qcctld runs as root, and run as root this file reported seven
+// failures while the code was correct. So the two cases that exist to be refused drop
+// CAP_DAC_OVERRIDE and CAP_DAC_READ_SEARCH first, and the kernel then refuses them for the
+// same reason the board would. See bind_to_mode_bits().
 
 #define _GNU_SOURCE
 #include "../src/apply.h"
@@ -22,10 +28,46 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <linux/capability.h>
 
 static char dir[64];
+
+/* 0 when this process can still ignore the mode bits, which makes the two refusal cases
+ * untestable rather than merely failing. */
+static int bound_by_mode = 1;
+
+/* Mode bits are the only lever a fixture has for "the kernel refused this write", and for
+ * root they are no lever at all. Dropping these two capabilities makes the ordinary DAC
+ * check apply to us: a 0444 target then refuses our open and a 0200 one refuses our read,
+ * which is what the attribute itself would do on the board. Nothing after this needs them -
+ * every fixture file is ours and 0644 - and non-root never had them to drop. */
+static void bind_to_mode_bits(void)
+{
+    struct __user_cap_header_struct hdr;
+    struct __user_cap_data_struct data[2];
+    const uint32_t drop = (1u << CAP_DAC_OVERRIDE) | (1u << CAP_DAC_READ_SEARCH);
+
+    if (geteuid() != 0)
+        return;                         /* already bound */
+
+    memset(&hdr, 0, sizeof hdr);
+    memset(data, 0, sizeof data);
+    hdr.version = _LINUX_CAPABILITY_VERSION_3;
+    if (syscall(SYS_capget, &hdr, data) != 0) {
+        bound_by_mode = 0;
+        return;
+    }
+    /* Only the first word: both capabilities are below 32, and the second word's bits 1
+     * and 2 are other capabilities entirely. */
+    data[0].effective   &= ~drop;
+    data[0].permitted   &= ~drop;
+    data[0].inheritable &= ~drop;
+    bound_by_mode = (syscall(SYS_capset, &hdr, data) == 0);
+}
 
 #define POLICY0 "/sys/devices/system/cpu/cpufreq/policy0"
 
@@ -163,6 +205,10 @@ static void t_a_failed_write_rolls_the_earlier_ones_back(void)
      * be undone and the third never attempted, so the board is left at boot values and
      * not in a state no config describes. Deleting apply_rollback's call used to pass
      * every check in both repositories. */
+    if (!bound_by_mode) {
+        T_FAIL("%s", "cannot drop CAP_DAC_OVERRIDE, so a refused write cannot be simulated");
+        return;
+    }
     boot_state();
     chmod_fx(POLICY0 "/scaling_min_freq", 0444);
 
@@ -172,6 +218,10 @@ static void t_a_failed_write_rolls_the_earlier_ones_back(void)
     plan(&ctx, POLICY0 "/scaling_max_freq", "1497600");
 
     T_EQ_INT(apply_commit(&ctx, err, sizeof err), -1, "a refused write fails the apply");
+    /* The message is built from the count the planner had, not from what the rollback did,
+     * so these two say the report is right - never that the undo happened. The three state
+     * checks below are the only evidence of that, and they are what caught a deleted
+     * apply_rollback() call. */
     T_HAS(err, "rolled back", "and says it rolled back");
     T_HAS(err, "scaling_min_freq", "naming the write that failed");
 
@@ -215,6 +265,10 @@ static void t_an_unreadable_prior_value_is_not_a_rollback_failure(void)
      * restore and that is not an error. The distinction is `had_value`: a rollback that
      * treated an unreadable capture as a failure would report a failed undo on every
      * apply that touched one. */
+    if (!bound_by_mode) {
+        T_FAIL("%s", "cannot drop CAP_DAC_READ_SEARCH, so an unreadable node cannot be simulated");
+        return;
+    }
     boot_state();
     chmod_fx(POLICY0 "/scaling_max_freq", 0200);        /* write-only */
 
@@ -475,6 +529,7 @@ int main(void)
         return 2;
     }
     io_set_sysroot(dir);
+    bind_to_mode_bits();
 
     t_commit_captures_before_it_writes();
     t_a_failed_write_rolls_the_earlier_ones_back();

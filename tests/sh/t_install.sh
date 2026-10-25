@@ -42,6 +42,16 @@ fi
 # ---------------------------------------------------------------- inside the sandbox
 [ "$(id -u)" = 0 ] || { echo "    t_install: not root inside the sandbox" >&2; exit 2; }
 
+# Everything below installs qcctl for real, writes /run and /usr/local/bin, and puts a stub
+# systemctl on PATH. QCCTL_TEST_SANDBOX says this is a throwaway root and the uid check says
+# we may - neither is evidence, and the uid check PERMITS the one user who could do the
+# damage. systemd is evidence: the container has no systemd as PID 1, and every machine this
+# could wreck does. One line, because an exported variable is not a safety mechanism.
+[ -d /run/systemd/system ] && {
+    echo "    t_install: refusing the sandbox half on a live system (/run/systemd/system)" >&2
+    exit 2
+}
+
 FX=$(ls -d tests/fixtures/monza-* 2>/dev/null | head -1)
 [ -n "$FX" ] || { echo "    t_install: no captured fixture" >&2; exit 2; }
 export QCCTL_SYSROOT=$PWD/$FX

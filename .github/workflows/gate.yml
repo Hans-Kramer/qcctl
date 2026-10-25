@@ -67,6 +67,19 @@ jobs:
             exit 1
           fi
 
+      - name: make test, as root
+        # qcctld runs as root, and until 2026-10-25 the suite had never been EXECUTED that
+        # way - here or anywhere. It matters: tests/t_commit.c induced a refused write with
+        # chmod 0444, which a caller holding CAP_DAC_OVERRIDE ignores, so the two cases that
+        # exist to be refused were not refused and seven checks failed on a board while the
+        # code was correct. Root is the uid that ships; it is now a uid the gate covers.
+        #
+        # Second, not first, and the build is handed back afterwards: anything make rebuilds
+        # under root would otherwise be root-owned for every step after this one.
+        run: |
+          sudo make test
+          sudo chown -R "$(id -u):$(id -g)" build
+
       - name: Shell scripts parse
         run: |
           for s in scripts/install.sh scripts/uninstall.sh scripts/fan-release.sh; do
@@ -231,6 +244,19 @@ jobs:
             echo "::error::a test skipped in CI for a reason this job does not expect"
             exit 1
           fi
+
+      - name: make test, as root
+        # qcctld runs as root, and until 2026-10-25 the suite had never been EXECUTED that
+        # way - here or anywhere. It matters: tests/t_commit.c induced a refused write with
+        # chmod 0444, which a caller holding CAP_DAC_OVERRIDE ignores, so the two cases that
+        # exist to be refused were not refused and seven checks failed on a board while the
+        # code was correct. Root is the uid that ships; it is now a uid the gate covers.
+        #
+        # Second, not first, and the build is handed back afterwards: anything make rebuilds
+        # under root would otherwise be root-owned for every step after this one.
+        run: |
+          sudo make test
+          sudo chown -R "$(id -u):$(id -g)" build
 
       - name: Assert these binaries really are aarch64
         run: |
