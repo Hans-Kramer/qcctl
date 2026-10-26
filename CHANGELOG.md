@@ -111,6 +111,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uninstall/reinstall cycle. `ProtectKernelTunables=` and `ProtectSystem=strict` remain the
   two that would break it, for the obvious reason.
 
+  Then across a **power cycle**, which is the part a restart cannot stand in for: the unit
+  came up on its own, wrote a boot-state snapshot before applying anything, applied 15
+  settings and verified 15 of them, resolved its sampler from `PATH` to the released
+  `/usr/local/bin/qcstats`, published a 0666 socket, and judged airflow against a baseline
+  that survived the reboot byte-identical - all with `CapEff` and `CapBnd` zero. The stale
+  selection file from the previous boot was ignored, exactly as its boot-id scoping
+  promises: *"profile source: DEFAULT - no selection was recorded this boot"*.
+
 - **Man pages: `qcctl.8` and `qcctld.8`, installed with the program.** A tool in
   `/usr/sbin` with no man page is one whose options can only be learned by running it, and
   `qcctld`'s were worse than unlisted - its flags are the ones nobody types, because systemd
