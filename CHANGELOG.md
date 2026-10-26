@@ -9,88 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
-### Fixed
-
-- **`board-check.sh` asserted a manifest *count*, which moves with the machine.** It wanted
-  15 OWNED paths, and the number was wrong in two independent ways: polkit is optional, so
-  an image without `/usr/share/polkit-1/actions` installs correctly with one path fewer, and
-  `qcstats` is OWNED only when this installer placed it - a board that already has one from
-  its own release gets `PREEXISTING` and no OWNED entry at all. Both are properties of the
-  machine, not of the installer, so a correct install could fail the check. It now asserts
-  the **set**: every path this installer always owns is recorded, the polkit action is
-  recorded where the image has one and skipped where it does not, and `qcstats` must appear
-  as *one* of OWNED or PREEXISTING - never neither, because a manifest that mentions it
-  nowhere means nobody is accountable for the copy on disk. 39 checks now, up from 37.
-
-  The board this ran on answers the question the count was hiding:
-  `PREEXISTING /usr/local/bin/qcstats`. `install.sh` resolves its dependency with
-  `command -v qcstats`, found the released binary ahead of its own `/usr/bin` copy, judged
-  it not ours and left it alone - and the daemon samples with it.
-
-- **`tests/sh/t_install.sh` could run its sandbox half against a live system, and did.**
-  That half installs `qcctl` for real, writes `/run`, and puts a stub `systemctl` on
-  `PATH`; its only protection was the `QCCTL_TEST_SANDBOX` variable the container run sets,
-  plus a uid check that *permits* root - the one user able to do the damage. During this
-  work it was run as root on the development board with that variable exported, and it did
-  what it does in a throwaway root: installed, then uninstalled. It removed every `qcctl`
-  binary, `/etc/qcctl`, both unit files and `/var/lib/qcctl` - boot-state snapshot and fan
-  baseline included - and left the stub `systemctl` shadowing the real one. The board was
-  never thermally at risk: the uninstaller left the zone `enabled` with the kernel holding
-  the fan, which is the behaviour `tests/board-check.sh` asserts.
-
-  It now refuses unless `/run/systemd/system` is absent. The container has no systemd as
-  PID 1; every machine this could wreck does. An exported variable is not a safety
-  mechanism, and a uid check that permits root is not one either.
-
-- **The suite had never been run as the uid the daemon runs as, and failed when it was.**
-  `qcctld` runs as root. Run as root, `tests/t_commit.c` reported seven failures against
-  correct code: both of its refusal cases induce the refusal with `chmod` - `0444` for a
-  write that must fail, `0200` for a prior value that cannot be read - and a caller holding
-  `CAP_DAC_OVERRIDE` ignores mode bits entirely, so the write succeeded, nothing rolled
-  back, and the "unreadable" node read fine.
-
-  The premise was wrong rather than the numbers: real sysfs refuses a write to a `0444`
-  attribute *whatever the uid*, because kernfs checks the mode itself, while a plain file in
-  a fixture obeys DAC and lets root override it. A fixture cannot imitate that with mode
-  bits alone. So the two cases now drop `CAP_DAC_OVERRIDE` and `CAP_DAC_READ_SEARCH` before
-  they begin (`bind_to_mode_bits()`, 25 lines of `capget`/`capset`, no new dependency), and
-  the kernel refuses them for the same reason the board would. Where the drop cannot be
-  made the cases fail with that as the reason instead of asserting nothing.
-
-  Proven on the board at both uids, and proven still able to catch the defect it exists for:
-  with `apply_rollback()`'s call deleted, "the write BEFORE the failure is undone" reddens
-  **as root**, where before the fix that mutation changed nothing because the write it was
-  meant to roll back had succeeded.
-
-- **A cooling map that binds several cooling devices yields no floor, instead of the first
-  entry's.** Handing a zone back to the kernel needs the state its own cooling map asks for,
-  and `cooling_map_lower()` read the first `<phandle, min, max>` entry of each map. With one
-  device per map — every map on this board — that is the fan's floor. With two it is a coin
-  toss: the entries name their devices by phandle, and on this kernel nothing reachable from
-  a cooling device identifies its device-tree node. Measured while closing this: the phandles
-  themselves are all there (851 of them under `/sys/firmware/devicetree/base`, and the
-  fixture's `0x1d4` resolves to the fan), but `/sys/class/thermal/cooling_device7` holds only
-  `cur_state`, `max_state`, `type`, `uevent`, `power/` and `stats/` — no `device` link, no
-  `of_node`. So the comparison the old comment proposed has nothing to compare against.
-
-  The floor is now reported unknown for such a zone, which the caller already reads as *leave
-  cooling at maximum* — the conservative end, costing a fan that keeps running. One
-  unattributable map decides the whole zone, even beside maps that read cleanly: the highest
-  of the legible floors is not the zone's floor. A property whose length completes no entry
-  is treated the same way rather than having its first 12 bytes read as a floor.
-
-  This was the only defect left open at `0.1.0`, parked because there was no way to exercise
-  a fix on hardware that cannot be in that shape. A synthetic device tree is the way: the
-  cells are 12 bytes each and a test writes as many as it likes.
-
-- **A check that passed for the wrong reason, found while writing the above.** The first
-  version rejected a ragged property with a modulo test and multi-entry maps with a length
-  test, and the test for the ragged case passed under a mutation that removed the modulo
-  test — because 17 bytes is also *longer than one entry*, so the other guard caught it. The
-  modulo test could never decide anything. One rule replaced both: exactly one entry, or no
-  floor.
+## [0.1.0] - 2026-10-26
 
 ### Added
 
@@ -190,39 +109,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indirect, and had to be — past that gate the capture takes the zone and dwells eight
   seconds per fan state, so it is killed partway and judged by the `mode` it left behind.
   Without that control, both refusals would pass for a binary that refuses every capture.
-
-### Changed
-
-- **`README.md` is an overview now, not a manual.** 412 lines down to 136: the build and
-  usage instructions it duplicated are in `docs/BUILD.md` and `docs/USAGE.md`, the
-  reasoning behind decisions is in this file, and the *Correctness* section's figures were
-  claims about the suite that the suite itself states by running. What stayed, because it is
-  operational rather than historical: the profile table, the two kinds of fan strategy,
-  airflow health, the daemon's one-sampler rule, a **Scope** section, and a short
-  **Limitations** list - this tool writes to thermal controls, and a reader deciding whether
-  to install it needs the sleep behaviour, the control-socket slot limit and the
-  multi-device cooling map in plain sight. Entries above that point at "the README's
-  limitations" mean that list.
-
-  Three sections had been cut mid-sentence and one claim was wrong: *Install* described a
-  staging directory without the `make stage` that assembles it, *Airflow health* lost the
-  `--fan-baseline capture` command it was introducing, and an "Install from GitHub" section
-  said a release builds on the board itself - which is qcstats' story, not this one. There
-  is no `qcctl` release to install from yet, and when there is, it will still need a staging
-  step and a sibling `qcstats`. The two candidate pre-sleep fixes that lived in
-  *Limitations* moved to `TODO.md`, where the open item they belong to already was.
-
-- **A refusal test no longer depends on the refusal to terminate.** The two capture checks
-  above run under `timeout`, because the thing being refused is a two-minute action: when the
-  refusal was mutated away the test waited for the capture instead of failing. Same rule as
-  the `--zones` refusal in `qcstats` and the socket capacity tests — a check that hangs the
-  day it regresses is a check that will be deleted rather than read.
-
----
-
-## [0.1.0] - 2026-10-21
-
-### Added
 
 - **A behavioural suite: 275 checks off hardware, 35 on it.** `make check` compiled this tree;
   nothing executed it. Every behavioural claim in these docs came from a measurement made by
@@ -613,6 +499,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`README.md` is an overview now, not a manual.** 412 lines down to 136: the build and
+  usage instructions it duplicated are in `docs/BUILD.md` and `docs/USAGE.md`, the
+  reasoning behind decisions is in this file, and the *Correctness* section's figures were
+  claims about the suite that the suite itself states by running. What stayed, because it is
+  operational rather than historical: the profile table, the two kinds of fan strategy,
+  airflow health, the daemon's one-sampler rule, a **Scope** section, and a short
+  **Limitations** list - this tool writes to thermal controls, and a reader deciding whether
+  to install it needs the sleep behaviour, the control-socket slot limit and the
+  multi-device cooling map in plain sight. Entries above that point at "the README's
+  limitations" mean that list.
+
+  Three sections had been cut mid-sentence and one claim was wrong: *Install* described a
+  staging directory without the `make stage` that assembles it, *Airflow health* lost the
+  `--fan-baseline capture` command it was introducing, and an "Install from GitHub" section
+  said a release builds on the board itself - which is qcstats' story, not this one. There
+  is no `qcctl` release to install from yet, and when there is, it will still need a staging
+  step and a sibling `qcstats`. The two candidate pre-sleep fixes that lived in
+  *Limitations* moved to `TODO.md`, where the open item they belong to already was.
+
+- **A refusal test no longer depends on the refusal to terminate.** The two capture checks
+  above run under `timeout`, because the thing being refused is a two-minute action: when the
+  refusal was mutated away the test waited for the capture instead of failing. Same rule as
+  the `--zones` refusal in `qcstats` and the socket capacity tests — a check that hangs the
+  day it regresses is a check that will be deleted rather than read.
+
 - **`qcctld` detaches by default, and `--foreground` now means something.** The flag was
   accepted and ignored — there was no fork path at all, so the only mode was the foreground
   one the unit asks for. `--foreground` is still what the unit passes, because `Type=simple`
@@ -754,6 +665,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release ships and the config lacks.
 
 ### Fixed
+
+- **`board-check.sh` asserted a manifest *count*, which moves with the machine.** It wanted
+  15 OWNED paths, and the number was wrong in two independent ways: polkit is optional, so
+  an image without `/usr/share/polkit-1/actions` installs correctly with one path fewer, and
+  `qcstats` is OWNED only when this installer placed it - a board that already has one from
+  its own release gets `PREEXISTING` and no OWNED entry at all. Both are properties of the
+  machine, not of the installer, so a correct install could fail the check. It now asserts
+  the **set**: every path this installer always owns is recorded, the polkit action is
+  recorded where the image has one and skipped where it does not, and `qcstats` must appear
+  as *one* of OWNED or PREEXISTING - never neither, because a manifest that mentions it
+  nowhere means nobody is accountable for the copy on disk. 39 checks now, up from 37.
+
+  The board this ran on answers the question the count was hiding:
+  `PREEXISTING /usr/local/bin/qcstats`. `install.sh` resolves its dependency with
+  `command -v qcstats`, found the released binary ahead of its own `/usr/bin` copy, judged
+  it not ours and left it alone - and the daemon samples with it.
+
+- **`tests/sh/t_install.sh` could run its sandbox half against a live system, and did.**
+  That half installs `qcctl` for real, writes `/run`, and puts a stub `systemctl` on
+  `PATH`; its only protection was the `QCCTL_TEST_SANDBOX` variable the container run sets,
+  plus a uid check that *permits* root - the one user able to do the damage. During this
+  work it was run as root on the development board with that variable exported, and it did
+  what it does in a throwaway root: installed, then uninstalled. It removed every `qcctl`
+  binary, `/etc/qcctl`, both unit files and `/var/lib/qcctl` - boot-state snapshot and fan
+  baseline included - and left the stub `systemctl` shadowing the real one. The board was
+  never thermally at risk: the uninstaller left the zone `enabled` with the kernel holding
+  the fan, which is the behaviour `tests/board-check.sh` asserts.
+
+  It now refuses unless `/run/systemd/system` is absent. The container has no systemd as
+  PID 1; every machine this could wreck does. An exported variable is not a safety
+  mechanism, and a uid check that permits root is not one either.
+
+- **The suite had never been run as the uid the daemon runs as, and failed when it was.**
+  `qcctld` runs as root. Run as root, `tests/t_commit.c` reported seven failures against
+  correct code: both of its refusal cases induce the refusal with `chmod` - `0444` for a
+  write that must fail, `0200` for a prior value that cannot be read - and a caller holding
+  `CAP_DAC_OVERRIDE` ignores mode bits entirely, so the write succeeded, nothing rolled
+  back, and the "unreadable" node read fine.
+
+  The premise was wrong rather than the numbers: real sysfs refuses a write to a `0444`
+  attribute *whatever the uid*, because kernfs checks the mode itself, while a plain file in
+  a fixture obeys DAC and lets root override it. A fixture cannot imitate that with mode
+  bits alone. So the two cases now drop `CAP_DAC_OVERRIDE` and `CAP_DAC_READ_SEARCH` before
+  they begin (`bind_to_mode_bits()`, 25 lines of `capget`/`capset`, no new dependency), and
+  the kernel refuses them for the same reason the board would. Where the drop cannot be
+  made the cases fail with that as the reason instead of asserting nothing.
+
+  Proven on the board at both uids, and proven still able to catch the defect it exists for:
+  with `apply_rollback()`'s call deleted, "the write BEFORE the failure is undone" reddens
+  **as root**, where before the fix that mutation changed nothing because the write it was
+  meant to roll back had succeeded.
+
+- **A cooling map that binds several cooling devices yields no floor, instead of the first
+  entry's.** Handing a zone back to the kernel needs the state its own cooling map asks for,
+  and `cooling_map_lower()` read the first `<phandle, min, max>` entry of each map. With one
+  device per map — every map on this board — that is the fan's floor. With two it is a coin
+  toss: the entries name their devices by phandle, and on this kernel nothing reachable from
+  a cooling device identifies its device-tree node. Measured while closing this: the phandles
+  themselves are all there (851 of them under `/sys/firmware/devicetree/base`, and the
+  fixture's `0x1d4` resolves to the fan), but `/sys/class/thermal/cooling_device7` holds only
+  `cur_state`, `max_state`, `type`, `uevent`, `power/` and `stats/` — no `device` link, no
+  `of_node`. So the comparison the old comment proposed has nothing to compare against.
+
+  The floor is now reported unknown for such a zone, which the caller already reads as *leave
+  cooling at maximum* — the conservative end, costing a fan that keeps running. One
+  unattributable map decides the whole zone, even beside maps that read cleanly: the highest
+  of the legible floors is not the zone's floor. A property whose length completes no entry
+  is treated the same way rather than having its first 12 bytes read as a floor.
+
+  This was the only defect left open at `0.1.0`, parked because there was no way to exercise
+  a fix on hardware that cannot be in that shape. A synthetic device tree is the way: the
+  cells are 12 bytes each and a test writes as many as it likes.
+
+- **A check that passed for the wrong reason, found while writing the above.** The first
+  version rejected a ragged property with a modulo test and multi-entry maps with a length
+  test, and the test for the ragged case passed under a mutation that removed the modulo
+  test — because 17 bytes is also *longer than one entry*, so the other guard caught it. The
+  modulo test could never decide anything. One rule replaced both: exactly one entry, or no
+  floor.
 
 - **The gate's first run failed, in the gate rather than the code.** Three faults, all mine,
   all found by running it:
