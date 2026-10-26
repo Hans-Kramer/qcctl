@@ -233,6 +233,23 @@ t_eq "$rc" 0 "the same apply for real exits 0"
 t_has "$out" "applying" "and says applying, not would apply"
 t_file_is "$MINFREQ" 1017600 "and the value is in the tree"
 
+# --- what -m says the choice is worth -------------------------------------------------
+#
+# The selection is boot-id scoped, so an applied profile holds until the next power cycle
+# and only the config decides what the board comes up on. docs/USAGE.md said that; the tool
+# did not, and a user who learns it by rebooting learns it the hard way. disr.conf is the
+# fixture with both shapes in it: 'd' is DEFAULT, 'ordinary' is not.
+run -c "$RT/disr.conf" -m ordinary
+t_has "$out" "holds until the next power cycle" "a non-DEFAULT apply says how long it holds"
+t_has "$out" "mark it DEFAULT in $RT/disr.conf" "and names the config file it was given"
+# Not for the DEFAULT profile: advising someone to mark DEFAULT what is already marked
+# teaches them to ignore the line.
+run -c "$RT/min.conf" -m p
+t_hasnt "$out" "holds until the next power cycle" "applying the DEFAULT says nothing of the kind"
+# And not under --json, whose shape consumers parse.
+run -c "$RT/disr.conf" -m ordinary --json
+t_hasnt "$out" "holds until the next power cycle" "nor does --json, which has a shape to keep"
+
 # --- output shapes --------------------------------------------------------------------
 
 run --query --json

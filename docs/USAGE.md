@@ -177,6 +177,16 @@ grep -o '"profile_source":"[a-z-]*"' /run/qcctl/status
 - `"selected"` — your choice is in force. Either select the new default explicitly with
   `sudo qcctl -m <name>`, or reboot, which clears the selection and comes up on `DEFAULT`.
 
+`qcctl -m <name>` says this itself when the profile you applied is not the `DEFAULT` one:
+
+```
+'quiet' holds until the next power cycle. To have the board come up on it,
+mark it DEFAULT in /etc/qcctl/profiles.conf
+```
+
+It names the config file it was actually given, and says nothing when you apply the
+`DEFAULT` profile — there would be nothing to change.
+
 #### `DEFAULT` and `FALLBACK` are different questions
 
 | | applied when |

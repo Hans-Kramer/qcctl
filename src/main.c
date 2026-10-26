@@ -1246,6 +1246,23 @@ int main(int argc, char **argv)
                 printf("applied; qcctld notified\n");
             else
                 printf("applied\n");
+
+            /* What the choice is worth, said where the choice is made. The selection above
+             * is boot-id scoped, so this profile holds until the next power cycle and the
+             * config file is the only thing that decides what the board COMES UP on - which
+             * is one edit away. docs/USAGE.md has always said so; nothing said it here, and
+             * a user who learns it by rebooting learns it the hard way.
+             *
+             * Silent when this IS the DEFAULT: telling someone to mark DEFAULT what is
+             * already marked teaches them to ignore the line. Silent under --json, whose
+             * shape consumers parse. */
+            if (!as_json) {
+                const struct profile *d = config_default(&c);
+
+                if (!d || strcmp(d->name, p->name) != 0)
+                    printf("'%s' holds until the next power cycle. To have the board come "
+                           "up on it, mark it DEFAULT in %s\n", p->name, conf);
+            }
         } else {
             printf("no writes performed\n");
         }

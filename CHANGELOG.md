@@ -94,6 +94,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`-m` now says how long the choice holds.** An applied profile is recorded as a
+  selection scoped to the boot id, so it survives a daemon restart and *not* a power cycle -
+  only `DEFAULT` in `profiles.conf` decides what the board comes up on. `docs/USAGE.md` has
+  always said so; the tool said nothing at the moment of choosing, which left the first
+  reboot to teach it. It now prints one line after `applied`:
+
+  ```
+  'quiet' holds until the next power cycle. To have the board come up on it,
+  mark it DEFAULT in /etc/qcctl/profiles.conf
+  ```
+
+  It names the config file it was given rather than the compiled-in default, says nothing
+  when the applied profile *is* the `DEFAULT` one - advising someone to mark `DEFAULT` what
+  is already marked teaches them to ignore the line - and says nothing under `--json`, whose
+  shape consumers parse. Four checks in `tests/sh/t_cli.sh`, each proven failable: inverting
+  the `DEFAULT` comparison reddens both branches, dropping the `--json` guard reddens the
+  third, and naming the default path instead of the given one reddens the fourth.
+
+  Considered and rejected: a `PERSIST SELECTION` knob making the selection outlive a
+  reboot. It would put two sources of truth behind one question - `profiles.conf` would no
+  longer tell you what the board boots into, and `DEFAULT` would demote from a declaration
+  to a fallback for machines that have never had a selection. Marking a profile `DEFAULT` is
+  already the operator's knob, and it is the self-documenting one.
+
 - **`CapabilityBoundingSet=` on `qcctld.service`, and it is empty.** Not a shortened list -
   none at all. Everything this daemon does privileged, it does as the *owner* of the file:
   every control point is 0644 root:root, sysfs attributes and the two
