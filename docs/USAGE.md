@@ -369,11 +369,31 @@ This is the one thing to get right when consuming it:
 | `drifted` | nothing was checked, because no profile was applied — not "nothing drifted" |
 | `target_mc`, `target_unreachable` | no closed-loop strategy is running |
 | `airflow` | not being judged at all — different from `"unknown"`, which means judged but no signal right now |
+| `fan_rpm_max` | no baseline is loaded, so this fan's full scale is unknown — **not** that it cannot spin |
 | `cpu[].mhz` | that policy reported no frequency — **not** 0 MHz |
 
 `sampler` is `"down"` while the telemetry source is being restarted; every reading goes
 `null` rather than freezing at its last value, because a stale number you keep displaying
-is worse than an admitted gap.
+is worse than an admitted gap. `fan_rpm_max` goes with them: a consumer that cannot see
+`fan_rpm` has nothing to scale against it.
+
+### `fan_rpm_max` is the fan's measured full scale
+
+`fan_rpm_max` is the baseline's mean at `fan_rpm_max_state`, the highest fan state that
+actually has a reading — 5237 rpm at state 10 on the reference board. It is published
+whenever a baseline is loaded, with no verdict required: a consumer can scale rpm against
+it while the fan sits in a state nobody judges.
+
+It exists because **duty is not speed on this fan**. At 40% duty (pwm 102 of 255) it turns
+2667 rpm, which is 51% of its top speed — the curve is nowhere near linear, so `255` is a
+full scale for the *command* and not for the airflow. A monitor that wants to say "this fan
+is running at 51%" needs a measured maximum, and the capture is the only place one exists:
+nothing in `hwmon` reports it (`emc2305` exposes `fan1_input` and `pwm1`, no `fan1_max`)
+and the cooling device reports states, not rpm.
+
+The highest state *with a reading* rather than `max_state`: a capture interrupted part-way
+leaves `max_state` at whatever the cooling device reported while the upper states hold
+nothing, and a full scale read off an empty slot is not a full scale.
 
 ### CPU frequencies are per **policy**, not per core
 
@@ -601,9 +621,14 @@ failing halfway. `-q`, `-l`, `-V`, `--verify` and `--dry-run` work unprivileged,
 **The fan is off and the board feels warm.** Below 38 °C the kernel wants it off; that is
 correct. If you want air now, `qcctl --cool-max`.
 
-**`airflow` says `unknown`.** Either no baseline is captured, no `< AIRFLOW >` block is in
-`fan.config`, or the fan is below state 2 where there is no signal. None of those is a
-fault.
+**`airflow` says `unknown`.** It is being judged and there is no signal right now: the fan
+is below state 2, its tachometer is not to be believed, or the state changed within the
+last eight seconds and the transient is not evidence. Not a fault.
+
+**`airflow` is `null`.** It is not being judged at all, which is a different thing: no
+baseline is captured, no `< AIRFLOW >` block is in `fan.config`, or a verdict has not yet
+met its debounce. `fan_rpm_max` still reports the full scale whenever a baseline is
+loaded, because that is a measurement and does not wait on a declared delta.
 
 **The journal says "zone37 does not drive cooling device 7".** The kernel's own binding
 links say the thermal zone this tool disables is not the one driving your fan. Fan commands

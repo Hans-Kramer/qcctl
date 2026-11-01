@@ -66,7 +66,11 @@ against
 when one has been captured and
 .IR fan.config 's
 .B < AIRFLOW >
-block names a delta.
+block names a delta. The same baseline supplies
+.B fan_rpm_max
+in the status file - the fan's measured full scale, which a monitor needs to express rpm
+as a fraction of what this fan can actually do. Duty is not speed on it: 40% duty turns
+51% of top speed.
 .PP
 If the sampler dies the fan is released
 .B first

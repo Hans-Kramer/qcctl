@@ -46,6 +46,14 @@ int fanbase_read(const char *path, struct fanbase *fb, char *err, size_t errlen)
 enum fanbase_verdict fanbase_judge(const struct fanbase *fb, int state, long rpm,
                                    int delta_pct, long *dev_pct);
 
+// The fan's measured full scale: the mean at the highest state that actually has a
+// reading, with that state in *state. 0 when the baseline has none.
+//
+// The highest state WITH A READING, not max_state: a capture interrupted part-way
+// leaves max_state at what the cooling device reported while the upper states hold
+// nothing, and a full scale read off an empty slot is not a full scale.
+long fanbase_top(const struct fanbase *fb, int *state);
+
 const char *fanbase_verdict_str(enum fanbase_verdict v);
 
 #endif

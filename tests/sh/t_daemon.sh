@@ -337,4 +337,43 @@ t_has "$cm" "hold released" "and, once it ends, that the hold ended"
 stop
 t_ok "$?" "stops"
 
+# ---- I: the fan's measured full scale, published and withheld ---------------------------
+# fan_rpm_max is what lets a consumer say "this fan is running at 51%", and it is only
+# knowable from a capture: 40% duty turns 51% of top speed on this fan, so pwm 255 is a
+# full scale for the command and not for the airflow. Both halves are pinned here - the
+# figure when a baseline is loaded, and null when none is, because a consumer reading 0
+# would scale against a fan that supposedly cannot spin.
+conf_without_strategy
+
+# No baseline at all.
+start "$(stream_of 33.0 33.0 33.0 33.0 33.0 33.0 33.0 33.0)"
+sleep 3
+t_has "$(cat "$RT/status")" '"fan_rpm_max":null' "no baseline, no full scale"
+t_has "$(cat "$RT/status")" '"fan_rpm_max_state":null' "and no state to attribute one to"
+stop
+t_ok "$?" "stops"
+
+# The reference capture, abbreviated. The daemon publishes the highest state that has a
+# reading, which is deliberately not max_state: state 10 is declared and absent here, so
+# the full scale is state 9's.
+cat > "$RT/fanbase" <<'EOF'
+captured 2026-10-25T18:44:13Z
+board test
+cdev emc2305_fan
+max_state 10
+state 2 mean 1386 lo 1362 hi 1396 n 4
+state 4 mean 2667 lo 2632 hi 2708 n 4
+state 9 mean 4856 lo 4776 hi 4890 n 4
+EOF
+start "$(stream_of 33.0 33.0 33.0 33.0 33.0 33.0 33.0 33.0)" \
+      --fan-baseline-file "$RT/fanbase"
+sleep 3
+t_has "$(cat "$RT/status")" '"fan_rpm_max":4856' "the highest state WITH a reading"
+t_has "$(cat "$RT/status")" '"fan_rpm_max_state":9' "and the state it was measured at"
+t_hasnt "$(cat "$RT/status")" '"fan_rpm_max_state":10' "not the declared max_state"
+# No verdict is needed to publish it: nothing has been judged at 33C with the fan off.
+t_has "$(cat "$RT/status")" '"airflow":null' "published with no verdict standing"
+stop
+t_ok "$?" "stops"
+
 t_summary

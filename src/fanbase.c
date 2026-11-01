@@ -153,6 +153,24 @@ enum fanbase_verdict fanbase_judge(const struct fanbase *fb, int state, long rpm
     return FANBASE_OK;
 }
 
+long fanbase_top(const struct fanbase *fb, int *state)
+{
+    int st;
+
+    if (state)
+        *state = -1;
+    if (!fb)
+        return 0;
+    for (st = FANBASE_MAX_STATE; st >= FANBASE_MIN_STATE; st--) {
+        if (fb->have[st] && fb->mean[st] > 0) {
+            if (state)
+                *state = st;
+            return fb->mean[st];
+        }
+    }
+    return 0;
+}
+
 const char *fanbase_verdict_str(enum fanbase_verdict v)
 {
     switch (v) {

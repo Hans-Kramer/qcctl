@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`fan_rpm_max` and `fan_rpm_max_state` in the status file.** The baseline's mean at the
+  highest fan state that has a reading - 5237 rpm at state 10 on the reference board. The
+  capture already measured it; nothing published it.
+
+  It is there because **duty is not speed on this fan**, and a monitor reading the status
+  file had no way to learn that. At 40% duty (pwm 102 of 255) the fan turns 2667 rpm, which
+  is 51% of its top speed - so `255` is a full scale for the *command* and not for the
+  airflow, and a dashboard scaling rpm against it would be wrong by eleven points in the
+  middle of the range. The capture is the only place a measured maximum exists: `emc2305`
+  exposes `fan1_input` and `pwm1` and no `fan1_max`, and the cooling device reports states
+  rather than rpm. Deriving it from pwm linearly gives 6664 rpm against a measured 5237,
+  which is the whole argument for publishing the measurement instead.
+
+  Published whenever a baseline is loaded, independently of whether there is a verdict: a
+  consumer can scale rpm while the fan sits in a state nobody judges, and does not need a
+  verdict to do arithmetic. `null` when no baseline is loaded, and `null` while the sampler
+  is down along with every other reading - a consumer that cannot see `fan_rpm` has nothing
+  to scale against it.
+
+  The highest state *with a reading* rather than `max_state`: a capture interrupted
+  part-way leaves `max_state` at whatever the cooling device reported while the upper states
+  hold nothing, and a full scale read off an empty slot is not a full scale.
+  `fanbase_top()` finds it.
+
+  Additive, so the status schema stays at `v:1`.
+
+---
+
 ## [0.1.0] - 2026-10-26
 
 ### Added

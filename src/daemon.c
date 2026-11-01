@@ -236,6 +236,12 @@ struct statusinfo {
     enum fanbase_verdict airflow;
     int  airflow_known;         /* 0 -> publish null, not "unknown" as a value */
     long airflow_dev_pct;
+    /* The fan's measured full scale, for a reader that wants to express rpm as a
+     * fraction of what this fan can actually do. 0 -> publish null: without a
+     * capture there is no full scale, and pwm 255 is not one - this fan reaches
+     * 51% of its top speed at 40% duty. */
+    long fan_rpm_max;
+    int  fan_rpm_max_state;
 };
 
 /* Set once, when the daemon detaches: a background process has no terminal to print to. */
@@ -364,6 +370,16 @@ static void publish_status(const char *path, const struct statusinfo *si)
     else
         fprintf(f, ",\"target_unreachable\":%s",
                 si->target_unreachable ? "true" : "false");
+
+    /* The measured full scale. Published whenever a baseline is loaded, independently
+     * of whether there is a verdict: a reader can scale rpm against it while the fan
+     * sits in a state nobody judges, and does not need a verdict to do arithmetic. */
+    if (si->fan_rpm_max > 0) {
+        fprintf(f, ",\"fan_rpm_max\":%ld", si->fan_rpm_max);
+        fprintf(f, ",\"fan_rpm_max_state\":%d", si->fan_rpm_max_state);
+    } else {
+        fprintf(f, ",\"fan_rpm_max\":null,\"fan_rpm_max_state\":null");
+    }
 
     /* Fan health. */
     if (!si->airflow_known) {
@@ -792,7 +808,8 @@ int main(int argc, char **argv)
     struct fanown rt;
     struct control ctl;
     struct fanbase fbase;
-    int have_fbase = 0;
+    int have_fbase = 0;     /* judging: a baseline AND a declared delta */
+    int fbase_loaded = 0;   /* a baseline was read, whatever the config asks for */
     char prev_profile[NAME_LEN] = "";
     /* The last reading seen, out here because the release at `out:` needs it. */
     long last_temp_mc = 0;
@@ -1117,14 +1134,26 @@ badarg:
             logmsg("control socket: %s (mode 0666; requests can only RAISE cooling)",
                    ctlsock);
 
-        /* Airflow health needs BOTH a captured reference and a user-declared delta. Absent
-         * either, we judge nothing and publish null - never "ok", because a missing
-         * judgement is not a clean one. */
+        /*
+         * The baseline is read whenever one is readable, because it carries a measurement
+         * - the fan's full scale - that is worth publishing on its own. JUDGING against
+         * it additionally needs a user-declared delta: that is intent, and nobody's fan
+         * should be called faulty against a threshold they never set.
+         *
+         * So two flags. Absent either half we judge nothing and publish `airflow` null -
+         * never "ok", because a missing judgement is not a clean one - while
+         * `fan_rpm_max` still says what the capture measured.
+         */
+        if (fanbase_read(fanbasef, &fbase, err, sizeof err) < 0) {
+            logmsg("fan baseline: none usable (%s). Capture one with "
+                   "'qcctl --fan-baseline capture'", err);
+        } else {
+            fbase_loaded = 1;
+        }
         if (!fc.air.present) {
             logmsg("airflow: no AIRFLOW block in the fan config - not judging");
-        } else if (fanbase_read(fanbasef, &fbase, err, sizeof err) < 0) {
-            logmsg("airflow: no usable baseline (%s) - not judging. Capture one with "
-                   "'qcctl --fan-baseline capture'", err);
+        } else if (!fbase_loaded) {
+            logmsg("airflow: not judging without a baseline");
         } else {
             have_fbase = 1;
             logmsg("airflow: judging against %s captured %s, delta %d%%, debounce %d",
@@ -1713,6 +1742,11 @@ badarg:
                 si.airflow_known = have_fbase && air_streak >= fc.air.debounce;
                 si.airflow = air_reported;
                 si.airflow_dev_pct = air_dev;
+                /* fbase_loaded, not have_fbase: the full scale is a measurement and
+                 * does not wait on somebody declaring a judgement delta. */
+                si.fan_rpm_max = fbase_loaded
+                                     ? fanbase_top(&fbase, &si.fan_rpm_max_state)
+                                     : 0;
                 if (strat.target) {
                     si.have_target  = 1;
                     si.target_mc    = strat.target->target_mc;
