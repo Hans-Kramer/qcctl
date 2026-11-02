@@ -3,9 +3,9 @@
 
 [![Platform](https://img.shields.io/badge/Platform-Arduino%20Ventuno%20Q-00878F?logo=arduino)](https://www.arduino.cc/)
 ![Language](https://img.shields.io/badge/language-C-A8B9CC?logo=c&logoColor=white)
+![Dependencies](https://img.shields.io/badge/dependencies-libc%20only-brightgreen)
 [![CI](https://github.com/Hans-Kramer/qcctl/actions/workflows/gate.yml/badge.svg)](https://github.com/Hans-Kramer/qcctl/actions/workflows/gate.yml)
 [![License](https://img.shields.io/badge/license-MPL%202.0-orange.svg)](LICENSE)
-![Dependencies](https://img.shields.io/badge/dependencies-libc%20only-brightgreen)
 [![Last commit](https://img.shields.io/github/last-commit/Hans-Kramer/qcctl)](https://github.com/Hans-Kramer/qcctl/commits/main)
 
 # qcctl
