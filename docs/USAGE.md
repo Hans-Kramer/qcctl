@@ -621,6 +621,46 @@ failing halfway. `-q`, `-l`, `-V`, `--verify` and `--dry-run` work unprivileged,
 **The fan is off and the board feels warm.** Below 38 °C the kernel wants it off; that is
 correct. If you want air now, `qcctl --cool-max`.
 
+**The fan is off and the board is ABOVE 38 °C, and nothing happens.** This zone has no
+`polling_delay`: the kernel evaluates it only when the sensor's threshold interrupt fires,
+which happens on a *crossing*. If the temperature is already past the trip, there is no
+crossing left to notice, so a fan state written while the zone was unowned — by a tool that
+crashed, by a hand-written `cur_state`, by anything — can persist indefinitely while the
+board sits hot.
+
+Two things that do **not** get you out of it, measured on a Ventuno Q at 44 °C with the trip
+at 38 °C:
+
+- Writing `cur_state` yourself. While the zone is `enabled` the governor owns the cooling
+  device and re-asserts its own decision, which is computed from the zone's *cached*
+  temperature — stale, for exactly the reason above. The write reads back as the old value.
+- Toggling `mode` to `disabled` and back. The daemon re-asserts `enabled` within seconds
+  when the profile in force has no fan strategy, and the fresh evaluation still uses the
+  cached temperature.
+
+What does work: `qcctl --cool-max`, which asks the daemon to take the zone and pin the fan —
+ownership is the lock, so the write holds. A reboot restores the kernel's own threshold
+programming.
+
+**An `irq/…-thermal-sensor` thread is burning most of a core.** Measured once on a Ventuno
+Q, and worth recognising: `irq/385-c263000.thermal-sensor` ran at **19,700 interrupts per
+second** for about six and a half minutes — 3.9 million of them — while a `--cool-max` hold
+had the zone `disabled`. It stopped dead, at exactly 0/s, the moment the hold was released
+and the zone returned to `enabled`.
+
+The cause is **not** established, and `mode=disabled` alone is not sufficient to cause it.
+Four controlled attempts failed to reproduce it on the same board: an unrelated zone
+disabled for five seconds; the fan's own zone disabled with the fan forced high; the same
+with load driving the temperature up through the trip; and the same again with the fan
+dropping it back. All four measured 0/s. So the trigger is some narrower interaction, and
+until it is pinned down the honest advice is just this: if you see it, release the hold and
+the storm stops.
+
+Worth knowing about the aftermath, because it is the state the board was found in: after the
+storm the sensor went *silent* rather than returning to normal, and the temperature climbed
+from 36 °C to 44.9 °C straight through the 38 °C trip without a single interrupt. The active
+trip was no longer being serviced at all. A reboot is the way back.
+
 **`airflow` says `unknown`.** It is being judged and there is no signal right now: the fan
 is below state 2, its tachometer is not to be believed, or the state changed within the
 last eight seconds and the transient is not evidence. Not a fault.

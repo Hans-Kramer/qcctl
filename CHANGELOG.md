@@ -41,6 +41,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Two measured thermal findings written down rather than left in a terminal.** Both came
+  out of a board session on 2026-11-02 and both are in `docs/USAGE.md`'s troubleshooting
+  section, with the open work in `TODO.md`:
+
+  A **tsens interrupt storm** — `irq/385-c263000.thermal-sensor` at 19,700/s for about six
+  and a half minutes, 3.9 million interrupts, most of a core — running for exactly as long as
+  a `--cool-max` hold had the zone `disabled`, and stopping at 0/s the instant the hold was
+  released. The cause is **not** established and is documented as unknown: four controlled
+  attempts to reproduce it measured 0/s, so `mode=disabled` by itself is not the trigger.
+  What is documented is the symptom, the cost, and the remedy.
+
+  And the state found afterwards: the sensor went **silent**, the board climbed from 36 °C to
+  44.9 °C straight through its 38 °C active trip without one interrupt, and the fan stayed
+  off. Neither writing `cur_state` nor toggling `mode` moved it - while the zone is `enabled`
+  the governor re-asserts its own decision from a cached temperature that nothing is
+  refreshing. Ownership is what breaks the deadlock, which is `--cool-max`; a reboot restores
+  the kernel's threshold programming. The watchdog does not catch this today because it
+  watches for states 1-3 and not for "off while above the active trip" - recorded as a gap.
+
+---
+
 ## [0.1.0] - 2026-10-26
 
 ### Added

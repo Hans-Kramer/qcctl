@@ -138,6 +138,14 @@ is absent is treated as absent, and nothing is guessed.
   device, so this is behaviour for other hardware.
 - **DDR frequency cannot be controlled.** `ddr_frequency_mhz` is write-only and every write
   to it times out.
+- **Holding the fan zone has once caused a tsens interrupt storm** — 19,700 interrupts a
+  second, most of a core, for as long as the hold lasted. Releasing the hold stopped it
+  instantly. It has not been reproducible on demand, so the cause is not known; the symptom
+  and what to do about it are in `docs/USAGE.md`.
+- **The fan can stay off while the board is hot**, if something wrote `cur_state` while the
+  zone was unowned: this zone has no `polling_delay`, so the kernel only re-evaluates on a
+  threshold crossing, and above the trip there is no crossing left. `qcctl --cool-max` takes
+  the zone and gets you air; a reboot restores the kernel's thresholds.
 - **No GUI, and no kernel modules.** Nothing here taints the kernel.
 
 ## License
