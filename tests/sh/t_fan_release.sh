@@ -94,7 +94,36 @@ out=$(run)
 t_file_is "$C0/cur_state" 10 "with no active trip the fan is left alone"
 t_file_is "$Z/mode" enabled "zone handed back"
 
-# 8. It can never fail a unit stop, whatever it finds - including a zone that is not there.
+# 8. A trip left parked by a SIGKILLed daemon is put back BEFORE anything else reads it, and
+#    the ORDER is observable here in a way a unit test cannot show: the fan decision is
+#    computed from the trip. At 50 C the board is above the real clear point (38000 - 3000),
+#    so the fan must be left alone - but against the parked trip's clear point (95000 - 3000)
+#    it would be wrongly driven to 0. Restoring after the fan decision fails this.
+shape disabled 50000 10 active 1
+echo 95000 > "$Z/trip_point_0_temp"
+mkdir -p "$FX/var/lib/qcctl"
+printf 'zone 0\ntrip 0\norig 38000\npark 95000\n' > "$FX/var/lib/qcctl/trip-held"
+out=$(run)
+t_file_is "$Z/trip_point_0_temp" 38000 "a parked active trip is put back"
+t_file_is "$C0/cur_state" 10 "and the fan is judged against it, not against the park"
+t_file_is "$Z/mode" enabled "the zone is handed back"
+t_has "$out" "active trip put back to 38000mC" "and the report says what it moved"
+t_ok "$([ ! -f "$FX/var/lib/qcctl/trip-held" ] && echo 0 || echo 1)" \
+     "the record is consumed, so a second run cannot repeat it"
+
+# 9. A record whose trip no longer reads the park value is dropped rather than acted on. A
+#    reboot re-authors trips from the device tree, and thermal zone indices are not stable
+#    across boots - so an unconditional write could land on another zone's trip.
+shape disabled 32000 0 active 1
+mkdir -p "$FX/var/lib/qcctl"
+printf 'zone 0\ntrip 0\norig 12345\npark 95000\n' > "$FX/var/lib/qcctl/trip-held"
+out=$(run)
+t_file_is "$Z/trip_point_0_temp" 38000 "a trip that is not parked keeps the value it has"
+t_hasnt "$out" "active trip put back" "and nothing is claimed about it"
+t_ok "$([ ! -f "$FX/var/lib/qcctl/trip-held" ] && echo 0 || echo 1)" \
+     "while the stale record is cleared"
+
+# 10. It can never fail a unit stop, whatever it finds - including a zone that is not there.
 shape disabled 32000 10 active 1
 QCCTL_SYSROOT=$FX sh "$SCRIPT" cpuss-0-0 >/dev/null 2>&1
 t_eq "$?" 0 "a run that acts exits 0"

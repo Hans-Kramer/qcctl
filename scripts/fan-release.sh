@@ -58,6 +58,36 @@ release_fan() {
     FANNOTE=" (fan was state $_state at ${_temp}mC, below the ${_clear}mC its trip clears at - set to 0)"
 }
 
+# The active trip qcctld parks while it owns the zone (src/fanown.c, FANOWN_PARK_MC), put
+# back from the record it leaves. This has to run FIRST: everything below reads the trip -
+# clear_point() computes the fan's answer from it, and writing `mode` is the one evaluation
+# that re-arms the sensor from it. Handing the zone back with the trip still parked would
+# arm a 95 C fan trip and compute the fan state against the wrong threshold.
+#
+# Only while the trip still reads the park value. A reboot re-authors it from the device
+# tree, and thermal zone indices are not stable across boots, so an unconditional write
+# could land on a different zone's trip.
+TRIPHOLD="${QCCTL_SYSROOT:-}/var/lib/qcctl/trip-held"
+TRIPNOTE=
+restore_parked_trip() {
+    [ -f "$TRIPHOLD" ] || return 0
+    _trip=$(sed -n 's/^trip //p' "$TRIPHOLD")
+    _orig=$(sed -n 's/^orig //p' "$TRIPHOLD")
+    _park=$(sed -n 's/^park //p' "$TRIPHOLD")
+    [ -n "$_trip" ] && [ -n "$_orig" ] && [ -n "$_park" ] || return 0
+    _f="$1/trip_point_${_trip}_temp"
+    [ -r "$_f" ] || return 0
+    [ "$(cat "$_f" 2>/dev/null)" = "$_park" ] || { rm -f "$TRIPHOLD"; return 0; }
+    if echo "$_orig" > "$_f" 2>/dev/null; then
+        rm -f "$TRIPHOLD"
+        TRIPNOTE=" (active trip put back to ${_orig}mC from ${_park}mC)"
+    else
+        echo "qcctl-fan-release: FAILED to put the active trip back to ${_orig}mC - the" >&2
+        echo "qcctl-fan-release: kernel will not act on this fan below ${_park}mC. Run:" >&2
+        echo "qcctl-fan-release:   echo $_orig > $_f" >&2
+    fi
+}
+
 found=0
 FANNOTE=
 for z in "$THERMAL"/thermal_zone*; do
@@ -70,11 +100,13 @@ for z in "$THERMAL"/thermal_zone*; do
     # a clean release leaves the zone enabled, and FAILSAFE full deliberately leaves the
     # fan at maximum. Neither is this script's to undo.
     if [ "$(cat "$z/mode" 2>/dev/null)" = disabled ]; then
-        # The fan first, then the zone: the same order the daemon's own release uses.
+        # The trip, then the fan, then the zone: the same order the daemon's own release
+        # uses, and for the same reasons.
+        restore_parked_trip "$z"
         release_fan "$z"
         echo enabled > "$z/mode" 2>/dev/null || true
         if [ "$(cat "$z/mode" 2>/dev/null)" = enabled ]; then
-            echo "qcctl-fan-release: ${z##*/} ($NAME) returned to the kernel$FANNOTE"
+            echo "qcctl-fan-release: ${z##*/} ($NAME) returned to the kernel$TRIPNOTE$FANNOTE"
         else
             # Nothing more can be done here, so say loudly that the fan is unmanaged.
             echo "qcctl-fan-release: FAILED to enable ${z##*/} ($NAME) - fan is NOT" >&2

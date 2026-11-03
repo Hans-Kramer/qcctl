@@ -7,10 +7,10 @@
 // that corrected a zone it did not hold. The two thresholds involved are the same number
 // used for opposite questions, which is exactly the confusion these checks exist to prevent.
 //
-// What this file does NOT reach: fanown_take(), _release(), _set(), _state() and
-// _correct_stale() all touch sysfs, so they are exercised against a fixture tree by
-// tests/sh/t_daemon.sh (sections A-D) instead. Only fanown_release_mode(),
-// fanown_clear_point() and the cooling-map reader are tested here.
+// What this file does NOT reach: _state() and _correct_stale() touch sysfs, so they are
+// exercised against a fixture tree by tests/sh/t_daemon.sh (sections A-D) instead. The trip
+// park is tested here, against a tree this file builds, because what makes it correct is an
+// ORDER of writes and the tree has to be inspected between them.
 //
 // The zone is built in this file rather than captured: the shapes that matter - no active
 // trip, no readable cooling map, a map that reads, a map binding two devices - are states
@@ -37,11 +37,18 @@ static void zone_as_shipped(struct surface *s)
     snprintf(s->zone[0].type, sizeof s->zone[0].type, "cpuss-0-0-thermal");
     s->zone[0].idx = 37;
     s->zone[0].ntrips = 3;
+    /* idx is the trip's own number in sysfs - trip_point_N_temp - and it is what a write
+     * has to address. surface.c reads it from the attribute name; here the board's own
+     * numbering is reproduced, because a park that addressed the list position instead
+     * would write a passive trip. */
     snprintf(s->zone[0].trips[0].type, sizeof s->zone[0].trips[0].type, "passive");
+    s->zone[0].trips[0].idx = 0;
     s->zone[0].trips[0].temp_mc = 135000; s->zone[0].trips[0].hyst_mc = 1000;
     snprintf(s->zone[0].trips[1].type, sizeof s->zone[0].trips[1].type, "passive");
+    s->zone[0].trips[1].idx = 1;
     s->zone[0].trips[1].temp_mc = 130000; s->zone[0].trips[1].hyst_mc = 5000;
     snprintf(s->zone[0].trips[2].type, sizeof s->zone[0].trips[2].type, "active");
+    s->zone[0].trips[2].idx = 2;
     s->zone[0].trips[2].temp_mc = 38000;  s->zone[0].trips[2].hyst_mc = 3000;
     s->zone[0].nbound = 1;
     s->zone[0].bound[0] = 7;
@@ -408,6 +415,237 @@ static void t_a_map_with_several_devices_has_no_attributable_floor(void)
     io_set_sysroot("");
 }
 
+/* --- the trip park -------------------------------------------------------------------- */
+
+static void put_at(const char *rel, const char *val)
+{
+    char path[700];
+    FILE *f;
+
+    snprintf(path, sizeof path, "%s/%s", dir, rel);
+    if ((f = fopen(path, "w")) == NULL) {
+        T_FAIL("cannot write %s", rel);
+        return;
+    }
+    fputs(val, f);
+    fclose(f);
+}
+
+static long get_at(const char *rel)
+{
+    char path[700], buf[64];
+    FILE *f;
+    long v = -1;
+
+    snprintf(path, sizeof path, "%s/%s", dir, rel);
+    if ((f = fopen(path, "r")) == NULL)
+        return -1;
+    if (fgets(buf, sizeof buf, f))
+        v = strtol(buf, NULL, 10);
+    fclose(f);
+    return v;
+}
+
+static int exists_at(const char *rel)
+{
+    char path[700];
+
+    snprintf(path, sizeof path, "%s/%s", dir, rel);
+    return access(path, F_OK) == 0;
+}
+
+/* A zone this tool can take: the shipped trips, plus the fan as a cooling device. */
+static void takeable(struct surface *s)
+{
+    char cmd[1400];
+
+    zone_as_shipped(s);
+    s->ncdev = 1;
+    snprintf(s->cdev[0].type, sizeof s->cdev[0].type, "emc2305_fan");
+    s->cdev[0].idx = 7;
+    s->cdev[0].max_state = 10;
+    s->cdev[0].state_ok = 1;
+
+    snprintf(cmd, sizeof cmd,
+             "mkdir -p '%s/sys/class/thermal/thermal_zone37' "
+             "'%s/sys/class/thermal/cooling_device7'", dir, dir);
+    if (system(cmd) != 0) {
+        T_FAIL("%s", "cannot create the zone fixture");
+        return;
+    }
+    put_at("sys/class/thermal/thermal_zone37/mode", "enabled\n");
+    put_at("sys/class/thermal/thermal_zone37/trip_point_2_temp", "38000\n");
+    put_at("sys/class/thermal/thermal_zone37/trip_point_2_hyst", "3000\n");
+    put_at("sys/class/thermal/cooling_device7/cur_state", "0\n");
+    put_at("sys/class/thermal/cooling_device7/max_state", "10\n");
+}
+
+/*
+ * Owning the fan means disabling the zone, and a disabled zone stops being evaluated - but
+ * the sensor keeps the threshold window it was last armed with. Taken while the fan trip is
+ * engaged, that window's lower bound is the trip's clear point, and the curve then cools the
+ * board below it: the interrupt is level-triggered, so it asserts with nothing left to
+ * service or re-arm it. Measured on the board at 20,675/s against 0/s with the trip parked.
+ *
+ * The park has to land while the kernel is STILL managing the zone, because that write is
+ * what re-programs the sensor; the restore has to land BEFORE the mode goes back, because
+ * writing mode is the one evaluation that re-arms it. Hence a test that looks at the tree
+ * between the two halves rather than only at the end.
+ */
+static void t_a_take_parks_the_active_trip(void)
+{
+    struct surface s;
+    struct fanown fo;
+    char err[256], hold[700];
+
+    takeable(&s);
+    snprintf(hold, sizeof hold, "%s/trip-held", dir);
+    fanown_set_hold_path(hold);
+
+    io_set_sysroot(dir);
+    T_EQ_INT(fanown_take(&fo, &s, "cpuss-0-0-thermal", "emc2305_fan", err, sizeof err), 0,
+             "the zone is taken");
+    io_set_sysroot("");
+
+    T_EQ_INT(fo.trip_parked, 1, "the active trip was parked");
+    T_EQ_INT((int)fo.trip_before_mc, 38000, "and the board's own value was kept");
+    T_EQ_INT(fo.trip_idx, 2, "by its own trip index, not its position in the list");
+    T_EQ_INT((int)get_at("sys/class/thermal/thermal_zone37/trip_point_2_temp"),
+             FANOWN_PARK_MC, "the trip now reads the park value");
+    T_TRUE(exists_at("trip-held"), "and the park is recorded, for a process that is killed");
+
+    io_set_sysroot(dir);
+    T_EQ_INT(fanown_release(&fo, FANOWN_HANDBACK), 0, "the release succeeds");
+    io_set_sysroot("");
+
+    T_EQ_INT((int)get_at("sys/class/thermal/thermal_zone37/trip_point_2_temp"), 38000,
+             "the trip is the board's own again");
+    T_EQ_INT(fo.trip_parked, 0, "nothing is parked any more");
+    T_TRUE(!exists_at("trip-held"), "and the record is gone with it");
+}
+
+/*
+ * The park value is only safe where nothing else sits at or below it. A zone with a passive
+ * limit under 95 C would have its trips reordered by the park, and a passive limit is the
+ * one thing on this zone that must keep meaning what it says - so the take proceeds and
+ * parks nothing. An interrupt storm costs a core; moving a passive trip risks the board.
+ */
+static void t_a_park_is_refused_when_a_trip_is_in_the_way(void)
+{
+    struct surface s;
+    struct fanown fo;
+    char err[256], hold[700];
+
+    takeable(&s);
+    s.zone[0].trips[1].temp_mc = 90000;         /* a passive limit below the park value */
+    snprintf(hold, sizeof hold, "%s/trip-held", dir);
+    fanown_set_hold_path(hold);
+
+    io_set_sysroot(dir);
+    T_EQ_INT(fanown_take(&fo, &s, "cpuss-0-0-thermal", "emc2305_fan", err, sizeof err), 0,
+             "the zone is still taken");
+    io_set_sysroot("");
+
+    T_EQ_INT(fo.trip_parked, 0, "but nothing was parked");
+    T_EQ_INT((int)get_at("sys/class/thermal/thermal_zone37/trip_point_2_temp"), 38000,
+             "and the trip is untouched");
+    T_TRUE(!exists_at("trip-held"), "with no record written");
+
+    io_set_sysroot(dir);
+    (void)fanown_release(&fo, FANOWN_HANDBACK);
+    io_set_sysroot("");
+}
+
+/*
+ * The crash case. Nothing runs on SIGKILL, so the park outlives the process; the record is
+ * what makes the original value recoverable. Recovery acts only while the trip still reads
+ * the park value: after a reboot the kernel has re-authored it from the device tree, and
+ * zone indices are not stable across boots - so an unconditional write could land on a
+ * different zone's trip entirely.
+ */
+static void t_a_parked_trip_outlives_a_kill_and_is_recovered(void)
+{
+    struct surface s;
+    struct fanown fo;
+    char err[256], hold[700];
+
+    takeable(&s);
+    snprintf(hold, sizeof hold, "%s/trip-held", dir);
+    fanown_set_hold_path(hold);
+
+    io_set_sysroot(dir);
+    T_EQ_INT(fanown_take(&fo, &s, "cpuss-0-0-thermal", "emc2305_fan", err, sizeof err), 0,
+             "the zone is taken");
+    /* Killed here: no release, and the struct goes with the process. */
+    memset(&fo, 0, sizeof fo);
+    T_EQ_INT((int)get_at("sys/class/thermal/thermal_zone37/trip_point_2_temp"),
+             FANOWN_PARK_MC, "the trip is left parked");
+
+    T_EQ_INT(fanown_recover_hold(hold, err, sizeof err), 1, "the next start recovers it");
+    io_set_sysroot("");
+    T_EQ_INT((int)get_at("sys/class/thermal/thermal_zone37/trip_point_2_temp"), 38000,
+             "and the board's own trip is back");
+    T_TRUE(!exists_at("trip-held"), "the record is consumed");
+
+    /* Nothing held: the usual case, and not an error. */
+    T_EQ_INT(fanown_recover_hold(hold, err, sizeof err), 0, "a second start finds nothing");
+
+    /* A record whose trip no longer reads the park value is dropped, not acted on. */
+    put_at("trip-held", "zone 37\ntrip 2\norig 38000\npark 95000\n");
+    put_at("sys/class/thermal/thermal_zone37/trip_point_2_temp", "41000\n");
+    io_set_sysroot(dir);
+    T_EQ_INT(fanown_recover_hold(hold, err, sizeof err), 0,
+             "a trip that is not parked is left alone");
+    io_set_sysroot("");
+    T_EQ_INT((int)get_at("sys/class/thermal/thermal_zone37/trip_point_2_temp"), 41000,
+             "its value stands");
+    T_TRUE(!exists_at("trip-held"), "and the stale record is cleared");
+}
+
+/*
+ * A sparse trip list, which is what an unreadable trip leaves behind: surface.c skips one
+ * it cannot read, so the list position and the sysfs trip number stop agreeing. Here the
+ * active trip is list entry 1 and sysfs trip 2 - a park that addressed the position would
+ * write trip_point_1_temp, a PASSIVE limit, and leave the active trip where it was.
+ */
+static void t_a_park_addresses_the_sysfs_trip_not_the_list_position(void)
+{
+    struct surface s;
+    struct fanown fo;
+    char err[256], hold[700];
+
+    takeable(&s);
+    /* trip_point_0 unreadable: two trips survive, numbered 1 and 2. */
+    s.zone[0].ntrips = 2;
+    snprintf(s.zone[0].trips[0].type, sizeof s.zone[0].trips[0].type, "passive");
+    s.zone[0].trips[0].idx = 1;
+    s.zone[0].trips[0].temp_mc = 130000; s.zone[0].trips[0].hyst_mc = 5000;
+    snprintf(s.zone[0].trips[1].type, sizeof s.zone[0].trips[1].type, "active");
+    s.zone[0].trips[1].idx = 2;
+    s.zone[0].trips[1].temp_mc = 38000;  s.zone[0].trips[1].hyst_mc = 3000;
+    put_at("sys/class/thermal/thermal_zone37/trip_point_1_temp", "130000\n");
+
+    snprintf(hold, sizeof hold, "%s/trip-held", dir);
+    fanown_set_hold_path(hold);
+
+    io_set_sysroot(dir);
+    T_EQ_INT(fanown_take(&fo, &s, "cpuss-0-0-thermal", "emc2305_fan", err, sizeof err), 0,
+             "the zone is taken");
+    io_set_sysroot("");
+
+    T_EQ_INT(fo.trip_idx, 2, "the parked trip is sysfs trip 2, not list entry 1");
+    T_EQ_INT((int)get_at("sys/class/thermal/thermal_zone37/trip_point_2_temp"),
+             FANOWN_PARK_MC, "the active trip is the one that moved");
+    T_EQ_INT((int)get_at("sys/class/thermal/thermal_zone37/trip_point_1_temp"), 130000,
+             "and the passive limit is untouched");
+
+    io_set_sysroot(dir);
+    (void)fanown_release(&fo, FANOWN_HANDBACK);
+    io_set_sysroot("");
+    T_EQ_INT((int)get_at("sys/class/thermal/thermal_zone37/trip_point_2_temp"), 38000,
+             "the release puts the right trip back");
+}
+
 int main(void)
 {
     char cmd[128];
@@ -427,6 +665,10 @@ int main(void)
     t_release_without_information_leaves_maximum();
     t_the_floor_reader_takes_the_highest();
     t_a_map_with_several_devices_has_no_attributable_floor();
+    t_a_take_parks_the_active_trip();
+    t_a_park_is_refused_when_a_trip_is_in_the_way();
+    t_a_parked_trip_outlives_a_kill_and_is_recovered();
+    t_a_park_addresses_the_sysfs_trip_not_the_list_position();
 
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir);
     if (system(cmd) != 0)

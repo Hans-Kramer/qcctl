@@ -50,6 +50,7 @@
  * unprivileged GUI) without sd-bus. */
 #define DEF_STATUS  "/run/qcctl/status"
 #define DEF_FANBASE "/var/lib/qcctl/fan-baseline"
+#define DEF_TRIPHOLD   "/var/lib/qcctl/trip-held"
 /* The fan watchdog corrects a state the kernel would never hold, on a zone we are not
  * driving. Bounded on purpose: a state that keeps coming back is someone's decision rather
  * than a leftover, and this daemon reports drift instead of fighting it. */
@@ -861,6 +862,20 @@ badarg:
     signal(SIGPIPE, SIG_IGN);   /* the sampler dying must not kill us */
 
     io_set_sysroot(getenv(ENV_SYSROOT));
+    /* Before anything takes a zone: put back a trip a killed predecessor left parked. The
+     * record is this tool's own, and it is only acted on while the trip still reads the
+     * park value - see fanown.c. */
+    fanown_set_hold_path(DEF_TRIPHOLD);
+    {
+        char terr[ERRLEN];
+        int r = fanown_recover_hold(DEF_TRIPHOLD, terr, sizeof terr);
+
+        if (r < 0)
+            logmsg("WARNING %s", terr);
+        else if (r > 0)
+            logmsg("put back a thermal trip left parked by an earlier run");
+    }
+
     surface_discover(&s);
 
     if (config_parse_file(conf, &pc) < 0) {

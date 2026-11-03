@@ -138,13 +138,13 @@ is absent is treated as absent, and nothing is guessed.
   device, so this is behaviour for other hardware.
 - **DDR frequency cannot be controlled.** `ddr_frequency_mhz` is write-only and every write
   to it times out.
-- **Owning the fan zone can storm the thermal sensor's interrupt** — 19,700 a second, a
-  whole IRQ thread. It needs two things together: the zone `disabled`, which is what owning
-  the fan means here, *and* the die temperature wobbling across the last-armed trip
-  threshold, which nothing re-arms while the zone is unmanaged. A curve meets that routinely,
-  because the kernel's clear point is 35 °C and a curve holds the board right there. Proven
-  by a one-variable test and written up in `docs/USAGE.md`; nothing is at risk while it
-  happens, but a core is.
+- **Owning the fan zone parks the kernel's active trip at 95 °C**, and puts it back on
+  release. A disabled zone keeps the threshold window the sensor was last armed with, whose
+  lower bound is the trip's clear point — so cooling the board below it asserted a
+  level-triggered interrupt that nothing was left to service, measured at up to 20,675 a
+  second, a whole IRQ thread. Parking the trip before disabling leaves a window with no
+  lower bound. It declines when another trip sits at or below 95 °C; the parked value is
+  recorded so a `SIGKILL` cannot lose it. Written up in `docs/USAGE.md`.
 - **The fan can stay off while the board is hot**, if something wrote `cur_state` while the
   zone was unowned: this zone has no `polling_delay`, so the kernel only re-evaluates on a
   threshold crossing, and above the trip there is no crossing left. `qcctl --cool-max` takes

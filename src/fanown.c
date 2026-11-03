@@ -10,10 +10,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define THERMAL_DIR "/sys/class/thermal"
 /* One <phandle, min, max> entry of a cooling-map, in device-tree cells. */
 #define CMAP_CELL 12
+
+static int lowest_active_trip(const struct zone *z);
+static int hold_write(const struct fanown *fo);
+static void hold_clear(void);
 
 int fanown_take(struct fanown *fo, const struct surface *s,
                 const char *zone_name, const char *cdev_name,
@@ -21,10 +26,11 @@ int fanown_take(struct fanown *fo, const struct surface *s,
 {
     const struct zone *z = surface_zone(s, zone_name);
     const struct cdev *cd = surface_cdev(s, cdev_name);
-    char path[PATH_MAXLEN];
+    char path[PATH_MAXLEN], val[24];
 
     memset(fo, 0, sizeof *fo);
     fo->last_state = -1;
+    fo->trip_idx = -1;
 
     if (!z)  { snprintf(err, errlen, "no zone '%s'", zone_name); return -1; }
     if (!cd) { snprintf(err, errlen, "no cooling device '%s'", cdev_name); return -1; }
@@ -62,12 +68,47 @@ int fanown_take(struct fanown *fo, const struct surface *s,
         return -1;
     }
 
+    /* Park the active trip while the kernel is STILL managing this zone: the trip write is
+     * what re-programs the sensor's threshold window, and the same write to an already
+     * disabled zone does not reach it. Only when every other trip on the zone sits above
+     * the park value, so this can neither reorder the trips nor mask a passive limit.
+     *
+     * A refused park is not a reason to refuse the take: what it avoids is an interrupt
+     * storm, which costs a core and threatens nothing. The zone is taken either way. */
+    {
+        int ti = lowest_active_trip(z);
+        int safe = ti >= 0;
+
+        for (int i = 0; safe && i < z->ntrips; i++)
+            if (i != ti && z->trips[i].temp_mc <= FANOWN_PARK_MC)
+                safe = 0;
+        if (safe) {
+            spath(path, sizeof path, THERMAL_DIR "/thermal_zone%d/trip_point_%d_temp",
+                  z->idx, z->trips[ti].idx);
+            snprintf(val, sizeof val, "%d", FANOWN_PARK_MC);
+            if (write_path_str(path, val) == 0) {
+                fo->trip_idx       = z->trips[ti].idx;
+                fo->trip_before_mc = z->trips[ti].temp_mc;
+                fo->trip_parked    = 1;
+            }
+        }
+    }
+
     spath(path, sizeof path, THERMAL_DIR "/thermal_zone%d/mode", z->idx);
     if (write_path_str(path, "disabled") < 0) {
+        /* The park above must not outlive a take that failed here. */
+        if (fo->trip_parked) {
+            spath(path, sizeof path, THERMAL_DIR "/thermal_zone%d/trip_point_%d_temp",
+                  z->idx, fo->trip_idx);
+            snprintf(val, sizeof val, "%ld", fo->trip_before_mc);
+            (void)write_path_str(path, val);
+            fo->trip_parked = 0;
+        }
         snprintf(err, errlen, "cannot disable zone %d: %s", z->idx, strerror(errno));
         return -1;
     }
     fo->owned = 1;
+    (void)hold_write(fo);      /* best effort: a missing record costs a crash, not a board */
     fo->max_state = cd->state_ok ? (int)cd->max_state : 10;
     fo->binding = surface_zone_binds(s, z, cd);
     return 0;
@@ -263,10 +304,96 @@ int fanown_set(struct fanown *fo, int state)
     return write_path_str(path, val);
 }
 
+/*
+ * The parked-trip record.
+ *
+ * A release puts the trip back, and so does a failed take - but neither runs if the process
+ * is killed outright. The value then survives nowhere, and the next take would read the park
+ * value as though the board had authored it and restore THAT on release, making one crash
+ * permanent. A reboot clears the park on its own, since sysfs trips are not persistent;
+ * this is for everything short of one.
+ */
+static char hold_path[PATH_MAXLEN];
+
+void fanown_set_hold_path(const char *path)
+{
+    snprintf(hold_path, sizeof hold_path, "%s", path ? path : "");
+}
+
+static int hold_write(const struct fanown *fo)
+{
+    FILE *f;
+
+    if (!fo->trip_parked || !hold_path[0])
+        return 0;
+    if ((f = fopen(hold_path, "w")) == NULL)
+        return -1;
+    fprintf(f, "# qcctl: a thermal trip parked while this tool owns the zone\n");
+    fprintf(f, "zone %d\ntrip %d\norig %ld\npark %d\n",
+            fo->zone_idx, fo->trip_idx, fo->trip_before_mc, FANOWN_PARK_MC);
+    return (fclose(f) == 0) ? 1 : -1;
+}
+
+static void hold_clear(void)
+{
+    if (hold_path[0])
+        (void)unlink(hold_path);
+}
+
+int fanown_recover_hold(const char *path, char *err, size_t errlen)
+{
+    char line[128], cur[32], tpath[PATH_MAXLEN], val[24];
+    int zone = -1, trip = -1, park = -1;
+    long orig = -1;
+    FILE *f;
+
+    if ((f = fopen(path, "r")) == NULL)
+        return 0;                               /* nothing held: the usual case */
+    while (fgets(line, sizeof line, f)) {
+        if (sscanf(line, "zone %d", &zone) == 1) continue;
+        if (sscanf(line, "trip %d", &trip) == 1) continue;
+        if (sscanf(line, "orig %ld", &orig) == 1) continue;
+        if (sscanf(line, "park %d", &park) == 1) continue;
+    }
+    fclose(f);
+
+    if (zone < 0 || trip < 0 || orig < 0 || park < 0) {
+        snprintf(err, errlen, "%s is unreadable or incomplete; remove it by hand", path);
+        return -1;
+    }
+
+    /* Only put back what is still parked. A reboot re-authors the trip from the device
+     * tree, and after one the recorded value is already in place - or the zone has been
+     * renumbered and this trip belongs to something else entirely, which is the case that
+     * makes an unconditional write dangerous. Zone indices are not stable across boots. */
+    spath(tpath, sizeof tpath, THERMAL_DIR "/thermal_zone%d/trip_point_%d_temp", zone, trip);
+    if (read_file_str(tpath, cur, sizeof cur) < 0) {
+        hold_clear();
+        return 0;
+    }
+    if (atol(cur) != park) {
+        hold_clear();
+        return 0;
+    }
+
+    snprintf(val, sizeof val, "%ld", orig);
+    if (write_path_str(tpath, val) < 0) {
+        snprintf(err, errlen,
+                 "thermal_zone%d trip %d is still parked at %d mC and cannot be put back "
+                 "to %ld mC (%s) - the kernel will not act on this zone's fan below %d mC "
+                 "until it is",
+                 zone, trip, park, orig, strerror(errno), park);
+        return -1;
+    }
+    (void)unlink(path);
+    return 1;
+}
+
 int fanown_release(struct fanown *fo, enum fanown_release how)
 {
     char path[PATH_MAXLEN], v[8];
     int fan_failed = 0, zone_failed = 0, fan_errno = 0, zone_errno = 0;
+    int trip_failed = 0;
 
     fo->release_err[0] = '\0';
     if (!fo->owned)
@@ -287,6 +414,23 @@ int fanown_release(struct fanown *fo, enum fanown_release how)
         int keep = (fo->last_state > before) ? fo->last_state : before;
         snprintf(v, sizeof v, "%d", keep);
         if (write_path_str(path, v) < 0) { fan_failed = 1; fan_errno = errno; }
+    }
+
+    /* Before the mode write, not after: writing mode is the one evaluation the kernel
+     * makes here, and it arms the sensor from whatever the trips say at that moment. Put
+     * them back first and the zone returns armed as the board authored it. */
+    if (fo->trip_parked) {
+        char tv[24];
+
+        spath(path, sizeof path, THERMAL_DIR "/thermal_zone%d/trip_point_%d_temp",
+              fo->zone_idx, fo->trip_idx);
+        snprintf(tv, sizeof tv, "%ld", fo->trip_before_mc);
+        if (write_path_str(path, tv) < 0)
+            trip_failed = 1;
+        else {
+            fo->trip_parked = 0;
+            hold_clear();
+        }
     }
 
     if (fo->zone_mode_before[0]) {
@@ -320,5 +464,5 @@ int fanown_release(struct fanown *fo, enum fanown_release how)
                  "refused (%s); the fan is left as it was, and the kernel takes it over "
                  "at its next trip crossing", fo->cdev_idx, strerror(fan_errno));
 
-    return (zone_failed || fan_failed) ? -1 : 0;
+    return (zone_failed || fan_failed || trip_failed) ? -1 : 0;
 }

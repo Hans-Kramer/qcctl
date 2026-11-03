@@ -19,6 +19,9 @@ struct fanown {
     int  max_state;                     // the cooling device's own ceiling
     int  last_state;                    // last state WE commanded, -1 if none.
     int  binding;
+    long trip_before_mc;                // the active trip as found, put back on release
+    int  trip_idx;                      // trip_point_N_temp that was parked, -1 if none
+    int  trip_parked;                   // the park write was accepted
     char release_err[384];
 };
 
@@ -28,9 +31,35 @@ enum fanown_release {
     FANOWN_LEAVE_AS_IS,
 };
 
+// Where the active trip is parked while this tool owns a zone.
+//
+// Owning the fan means disabling the zone, and a disabled zone stops being evaluated - but
+// the SENSOR keeps the threshold window it was last armed with. Taking the zone while the
+// fan trip is engaged leaves that window's lower bound at the trip's clear point, and the
+// curve then cools the board below it: the interrupt is level-triggered, so it asserts and
+// nothing is left to service or re-arm it. Measured at 20,675/s, a whole IRQ thread, and
+// silent again the moment the trip is parked. 95 C is above anything a board with a running
+// fan reaches and below this board's passive trips at 130 and 135 C.
+#define FANOWN_PARK_MC 95000
+
 int  fanown_take(struct fanown *fo, const struct surface *s,
                  const char *zone_name, const char *cdev_name,
                  char *err, size_t errlen);
+
+// Where a parked trip is recorded, so one survives a process that dies holding the zone.
+// Without the record the original value is lost: a later take would read the park value as
+// though the board had authored it and restore THAT on release, making one crash permanent.
+//
+// Set once at startup rather than passed to each call: there are four take/release sites
+// between the daemon and the CLI, and a path threaded through all four is a path one of
+// them eventually does not get. Unset means no record is kept.
+void fanown_set_hold_path(const char *path);
+
+// Put back a trip left parked by a process that died holding a zone. For the DAEMON, at its
+// own startup and before it takes anything - not for the CLI: a legitimate park under a live
+// daemon is indistinguishable from a leftover one from outside, so a read-only invocation
+// would misread the first as the second. 1 = restored one, 0 = nothing to do, -1 = failed.
+int  fanown_recover_hold(const char *path, char *err, size_t errlen);
 
 
 // The lowest `active` trip on this zone, which is the temperature at or above which the

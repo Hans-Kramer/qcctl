@@ -34,6 +34,7 @@
 #define DEFAULT_SELECTED "/var/lib/qcctl/selected"
 #define COOLMAX_STATUS "/run/qcctl/status"
 #define FANBASE_PATH   "/var/lib/qcctl/fan-baseline"
+#define TRIPHOLD_PATH "/var/lib/qcctl/trip-held"
 
 static void usage(void)
 {
@@ -899,6 +900,14 @@ int main(int argc, char **argv)
     }
 
     io_set_sysroot(getenv(ENV_SYSROOT));
+    /* The hold path, so a zone this CLI takes itself records and clears its park like the
+     * daemon's does. Recovery of a park left by a KILLED process is deliberately not done
+     * here: a parked trip and a live daemon holding the zone look identical from outside,
+     * so an unprivileged `qcctl -l` would both misread a legitimate park as a leftover and
+     * fail to write it back. qcctld recovers at its own startup, before it takes anything,
+     * and uninstall.sh does it too. */
+    fanown_set_hold_path(TRIPHOLD_PATH);
+
     surface_discover(&s);
 
     if (fanbase_act) {

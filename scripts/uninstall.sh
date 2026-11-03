@@ -152,6 +152,29 @@ fi
 # Independent of the unit's ExecStopPost. A SIGKILL cannot run a handler, so this must
 # not be the only defence - and it must be VERIFIED, not assumed.
 note "2. returning the fan's thermal zone to the kernel"
+# The active trip BEFORE the mode: writing mode is the one evaluation the kernel makes
+# here, and it arms the sensor from whatever the trips say at that moment. qcctld parks the
+# active trip while it owns the zone (src/fanown.c, FANOWN_PARK_MC) so that cooling the
+# board cannot violate a threshold nothing is left to service; a SIGKILL leaves it parked,
+# and this record is how the board's own value survives. Without this the zone would be
+# handed back armed with a 95 C fan trip - the fan would not start until 95 C.
+TRIPHOLD=/var/lib/qcctl/trip-held
+if [ -n "$ZONE" ] && [ -f "$TRIPHOLD" ]; then
+    th_trip=$(sed -n 's/^trip //p' "$TRIPHOLD")
+    th_orig=$(sed -n 's/^orig //p' "$TRIPHOLD")
+    th_park=$(sed -n 's/^park //p' "$TRIPHOLD")
+    th_file="${ZONE%/mode}/trip_point_${th_trip}_temp"
+    if [ -n "$th_trip" ] && [ -n "$th_orig" ] && [ -n "$th_park" ] &&
+       [ -r "$th_file" ] && [ "$(cat "$th_file" 2>/dev/null)" = "$th_park" ]; then
+        if [ "$DRY" = 1 ]; then
+            echo "    would: echo $th_orig > $th_file   (an active trip left parked)"
+        else
+            note "   putting back an active trip left parked at $th_park mC: $th_orig mC"
+            echo "$th_orig" > "$th_file" 2>/dev/null ||
+                warn "could not put the parked trip back - a reboot clears it"
+        fi
+    fi
+fi
 if [ -z "$ZONE" ]; then
     warn "no thermal zone named '$FANZONE' on this board - cannot verify fan ownership."
     warn "If a daemon was running, release the fan by hand before trusting this result."

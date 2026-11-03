@@ -11,6 +11,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The interrupt storm is fixed, and the mechanism I published yesterday was wrong.** Taking
+  the fan's zone now parks its active trip at 95 °C and puts it back on release. Measured on
+  the board: the conditions that gave **20,595/s** gave **0/s** with the trip parked, at a
+  temperature 0.7 °C *lower*, and 90 consecutive samples below the old cliff — down to
+  31.2 °C — stayed at 0 interrupts.
+
+  Yesterday's entry said the storm needed the die temperature *wobbling across* the
+  last-armed threshold. That is not it, and three experiments disproved it: a threshold
+  parked exactly on the die temperature measured 0/s; the same after a known-good re-arm
+  measured 0/s while the die crossed it repeatedly; and a load-driven crossing of the trip
+  from below measured 0/s. What the earlier one-variable test actually showed was that *any*
+  re-arm stops it — not what starts it.
+
+  The mechanism is the **lower bound of a retained window**. A disabled zone keeps the
+  threshold window the sensor was last armed with. Taken while the fan trip is engaged, that
+  window's lower bound is the trip's clear point — 35.0 °C here — and the curve then cools
+  the board below it. The interrupt is level-triggered, so it asserts and stays asserted,
+  with nothing left to service it and nothing to re-arm the window. 600 one-second samples,
+  zone `disabled` throughout, put the boundary exactly at the clear point:
+
+  | die temperature | samples | mean rate | quiet (<100/s) |
+  |---|---|---|---|
+  | 32.0–32.9 °C | 224 | 20,445/s | 0 |
+  | 33.0–33.9 °C | 243 | 19,140/s | 0 |
+  | 34.0–34.9 °C | 126 | 5,478/s | 39 |
+  | 35.0–35.9 °C | 6 | 0/s | 6 |
+  | 36.0–36.9 °C | 1 | 0/s | 1 |
+
+  Below it, not one sample in 467 was quiet; at or above it, every sample was. It also
+  explains the measurements that looked contradictory: between the clear point and the trip,
+  and above the trip, the die is *inside* the retained window.
+
+  **Order is the whole of the fix.** A trip write only reaches the sensor while the kernel is
+  still managing the zone, so the park lands before `mode=disabled`; writing `mode` is the one
+  evaluation that re-arms, so the restore lands before `mode` goes back. With no trip engaged
+  the window has no lower bound at all, so cooling cannot violate it.
+
+  It declines to park when any other trip on the zone sits at or below 95 °C, because that
+  would reorder the zone's trips and a passive limit has to keep meaning what it says — the
+  Ventuno Q's are 130 °C and 135 °C. A refused park does not refuse the take: a storm costs a
+  core and threatens nothing.
+
+  **The crash path needed its own answer.** No handler runs on `SIGKILL`, so the park outlives
+  the process, and a later take would have read 95 °C as the board's own trip and restored
+  *that* — making one crash permanent. The value is recorded in `/var/lib/qcctl/trip-held`;
+  `qcctl-fan-release` (the unit's `ExecStopPost`, which systemd runs after a `SIGKILL` too)
+  puts it back, and so do `qcctld` at startup and `uninstall.sh`. Verified on hardware: a
+  `SIGKILL` left `mode=enabled` with the trip still at 95 °C — the fan would not have started
+  until 95 °C — and the hook now returns it to 38 000 mC before re-enabling the zone.
+
+  Recovery acts only while the trip still reads the park value. A reboot re-authors trips from
+  the device tree, and **thermal zone indices are not stable across boots** on this board, so
+  an unconditional write could land on a different zone's trip.
+
+  Found on hardware and fixed before release: the recovery was also wired into the CLI, where
+  an unprivileged `qcctl -l` both misread a *live* daemon's legitimate park as a leftover and
+  could not write it back, printing a warning about the fan not starting below 95 °C. A park
+  under a running daemon is indistinguishable from a leftover from outside, so recovery is the
+  daemon's alone.
+
+  Six mutations prove the new checks: addressing the trip's list position instead of its sysfs
+  number parks a *passive* limit; parking regardless of what sits below it; recovering without
+  checking the trip is still parked; dropping the park entirely; and — in the shell suite,
+  which can observe the order the unit tests cannot — restoring *after* the fan decision, which
+  drives the fan to 0 on a 50 °C board.
+
 ### Added
 
 - **`fan_rpm_max` and `fan_rpm_max_state` in the status file.** The baseline's mean at the

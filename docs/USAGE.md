@@ -642,39 +642,52 @@ What does work: `qcctl --cool-max`, which asks the daemon to take the zone and p
 ownership is the lock, so the write holds. A reboot restores the kernel's own threshold
 programming.
 
-**An `irq/…-thermal-sensor` thread is burning most of a core.** Measured on a Ventuno Q:
-**19,700 interrupts per second**, a full IRQ thread, for as long as the condition lasts — and
-it recurs. The cause is now known, and it needs two things at once:
+**An `irq/…-thermal-sensor` thread is burning most of a core.** Measured on a Ventuno Q at
+up to **20,675 interrupts per second** — a full IRQ thread. **This is fixed**; what follows is
+for recognising it on an older build, or if the fix declined to act (below).
 
-1. the zone is **`disabled`**, which is what any `qcctl` fan strategy or `--cool-max` hold
-   does, because ownership of the fan *is* the disabled mode; and
-2. the die temperature is **wobbling across whichever trip threshold was last armed**.
+Owning the fan means setting the zone `disabled`, and the thermal core then stops evaluating
+it — but the *sensor* keeps the threshold window it was last armed with. Taken while the fan
+trip was engaged, that window's **lower bound is the trip's clear point**: 35.0 °C, from the
+kernel's own active trip at 38 °C with 3 °C of hysteresis. The curve then cools the board
+below it, and because the interrupt is level-triggered it asserts and stays asserted — there
+is nothing left to service it and nothing to re-arm the window.
 
-The thermal core does not service a zone it is not managing, so it never clears or re-arms
-that threshold: every crossing fires again immediately. Each condition alone is harmless.
+It is the lower bound being violated, not a crossing. 600 one-second samples, zone `disabled`
+throughout:
 
-The proof is a one-variable test, run while it was storming:
+| die temperature | samples | mean rate | quiet (<100/s) |
+|---|---|---|---|
+| 32.0–32.9 °C | 224 | **20,445/s** | 0 |
+| 33.0–33.9 °C | 243 | **19,140/s** | 0 |
+| 34.0–34.9 °C | 126 | 5,478/s | 39 |
+| 35.0–35.9 °C | 6 | **0/s** | 6 |
+| 36.0–36.9 °C | 1 | **0/s** | 1 |
 
-| | rate | temp |
-|---|---|---|
-| zone `disabled`, as found | **19,783/s** | 34.5 °C |
-| `mode` set to `enabled` | **0/s** | 34.2 °C |
-| still `enabled`, six seconds later | **0/s** | 33.8 °C |
+The boundary is the clear point, exactly. Below it the rate never fell below 100/s; at or
+above it the rate was zero in every sample. A fan curve meets this by design — `POINT 38C`
+holds the board right at 35 °C, which is where the cliff is.
 
-and the converse: `disabled` at 35.3–35.7 °C, a few tenths *above* the boundary, measured
-0/s. Only `mode` changed between the first two rows.
+**The fix.** Before disabling the zone, `qcctl` moves the active trip to 95 °C, and puts it
+back before handing the zone back. The order is the whole of it: a trip write only reaches
+the sensor while the kernel is still managing the zone, and writing `mode` is the one
+evaluation that re-arms it. With no trip engaged the window has no lower bound at all, so
+cooling cannot violate it. Verified on the board: the same conditions that gave 20,595/s gave
+**0/s** with the trip parked, at a temperature 0.7 °C *lower*.
 
-**Why a fan curve meets this routinely.** A curve with `POINT 38C STATE 4` and the kernel's
-own active trip at 38 °C with 3 °C of hysteresis has its clear point at **35.0 °C** — and the
-curve then holds the board right there, because that is what a curve does. The storming
-sample above was at 34.9 °C.
+It declines to act when any other trip on the zone sits at or below 95 °C, because parking
+would then reorder the zone's trips and a passive limit must keep meaning what it says. On a
+Ventuno Q the passive trips are 130 °C and 135 °C, so it always acts.
 
-**What to do.** Writing `enabled` to the zone's `mode` stops it instantly, but that also
-hands the fan back, so a curve in force will take it again within a tick and the condition
-can return. Switching to a profile with no fan strategy — the shipped `balanced` — leaves the
-zone enabled and the kernel in charge, which avoids it entirely. Nothing is at risk while it
-storms: the fan still runs, the readings are still correct, and the cost is one core's worth
-of interrupt handling.
+A `SIGKILL` cannot run the restore, so the parked value is recorded in
+`/var/lib/qcctl/trip-held`; the next start, and `uninstall.sh`, put it back. Recovery acts
+only while the trip still reads 95 °C — after a reboot the kernel has re-authored it, and
+**thermal zone indices are not stable across boots**, so an unconditional write could land on
+a different zone's trip. If you ever see that file on a board with no `qcctld` running, the
+active trip may still be parked: `systemctl start qcctld` clears it, and so does a reboot.
+
+Nothing was ever at risk while it stormed: the fan ran, the readings were correct, and the
+cost was one core's worth of interrupt handling.
 
 **`airflow` says `unknown`.** It is being judged and there is no signal right now: the fan
 is below state 2, its tachometer is not to be believed, or the state changed within the
