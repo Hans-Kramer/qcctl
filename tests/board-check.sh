@@ -165,7 +165,35 @@ s_surface() {
         case "$out" in *$p*) ok "$p is present" ;; *) bad "$p is missing" ;; esac
     done
     note "zone=$ZONE cdev=$CDEV trip=$(trip) hyst=$(hyst) clear=$(clearp)"
-    eq "$(mode)" enabled "the zone is under kernel control at rest"
+    # NOT a constant, and asserting `enabled` here was wrong: whether the kernel owns the
+    # fan at rest depends on whether the profile in force has a fan strategy, which is the
+    # operator's choice and not this script's. Anyone using the fan curve - the feature this
+    # tool exists for - met a failure on the first check of the suite.
+    #
+    # The relationship holds either way, and says more: when this tool owns the zone the
+    # active trip is parked out of reach (see FANOWN_PARK_MC), and when it does not the trip
+    # is the board's own. Compared against a threshold rather than the park value, so the
+    # constant is not duplicated here to drift.
+    owned=$(sed -n 's/.*"fan_owned":\([a-z]*\).*/\1/p' /run/qcctl/status 2>/dev/null)
+    [ -n "$owned" ] || owned=false      # no daemon, no owner
+    if [ "$owned" = true ]; then
+        note "a fan strategy is in force, so this tool owns the zone"
+        eq "$(mode)" disabled "the zone is owned by this tool, not the kernel"
+        if [ "$(trip)" -gt 80000 ]; then
+            ok "and its active trip is parked out of reach ($(trip) mC)"
+        else
+            bad "the active trip is $(trip) mC, not parked - the sensor will storm below "\
+"its clear point"
+        fi
+    else
+        eq "$(mode)" enabled "the zone is under kernel control at rest"
+        if [ "$(trip)" -lt 80000 ]; then
+            ok "and its active trip is the board's own ($(trip) mC)"
+        else
+            bad "the active trip is still parked at $(trip) mC with the zone unowned - the "\
+"kernel will not cool this board until it reaches that"
+        fi
+    fi
 }
 
 s_reset() {
@@ -271,6 +299,20 @@ s_capture() {
 
 s_install() {
     head_ "install: removal is reversible, and the operator's data survives it"
+    # The staging check comes FIRST, and skips rather than notes. It used to sit after the
+    # uninstall: with no staging build the section removed qcctl, said so in a passing note
+    # and returned, leaving the board uninstalled - so every check in `release` below then
+    # measured a machine with no daemon and reported five failures that had nothing to do
+    # with handing back a fan. Nothing here may remove what it cannot put back.
+    #
+    # The default also matched nothing: it was /tmp/stage while the Makefile stages into
+    # /tmp/qcctl-stage, so a plain run could never find a staged build.
+    STAGEDIR=${STAGE:-/tmp/qcctl-stage}
+    if [ ! -f "$STAGEDIR/install.sh" ]; then
+        skip_ "no staging build at $STAGEDIR, so an uninstall could not be undone - build one"
+        note "ON the board with: make stage-native QCSTATS=<path>   (then STAGE=<dir> here)"
+        return
+    fi
     [ -f /var/lib/qcctl/fan-baseline ] || { note "no baseline to protect; capturing one"; qcctl --fan-baseline capture >/dev/null 2>&1; }
     sum=$(md5sum /var/lib/qcctl/fan-baseline | cut -d' ' -f1)
     out=$(qcctl-uninstall 2>&1); rc=$?
@@ -285,8 +327,7 @@ s_install() {
        "the fan baseline survives, byte-identical"
     [ -f /etc/qcctl/profiles.conf ] && ok "the config is kept" || bad "the config was removed"
 
-    [ -d "${STAGE:-/tmp/stage}" ] || { note "no staging dir at ${STAGE:-/tmp/stage}; cannot reinstall"; return; }
-    sh "${STAGE:-/tmp/stage}/install.sh" >/dev/null 2>&1
+    sh "$STAGEDIR/install.sh" >/dev/null 2>&1
     sleep 4
     eq "$(systemctl is-active qcctld)" active "the reinstall brings the unit back"
     # The SET, not a count. A count was here and it was wrong twice over: polkit is optional,

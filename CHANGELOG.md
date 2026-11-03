@@ -13,6 +13,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tests/board-check.sh` removed what it could not put back, and two checks reported the
+  wrong thing.** Found by running it on the board after the trip-park change, where it came
+  back `33 checks, 6 FAILED` — and only one of those six was real.
+
+  The `install` section uninstalled qcctl and *then* looked for a staging build to reinstall
+  from. With none, it printed a passing note and returned, leaving the board uninstalled — so
+  the five checks of the `release` section below it measured a machine with no daemon at all
+  and reported five failures about handing back a fan. The staging check now comes first and
+  `skip_`s the section, which is counted and repeated in the summary. Nothing here removes
+  what it cannot restore. Its default staging path also matched nothing: `/tmp/stage`, while
+  the Makefile stages into `/tmp/qcctl-stage`, so a plain run could never find a build.
+
+  The sixth failure was the `surface` section asserting the resting zone mode is `enabled`.
+  That is not a constant — it depends on whether the profile in force has a fan strategy,
+  which is the operator's choice and not the script's, and every other section applies its
+  own profile first. Anyone running this with a fan curve selected, which is the feature this
+  tool exists for, met a failure on the first check of the suite. It now asserts the
+  relationship from `fan_owned`, which holds either way and says more: when this tool owns
+  the zone the active trip is parked out of reach, and when it does not the trip is the
+  board's own. Compared against a threshold rather than the park value, so the constant is
+  not duplicated here to drift. Both branches were exercised on hardware.
+
+  **40 checks ok, 8m44s**, with the board left installed, on `balanced`, the zone under
+  kernel control and its trip at 38 000 mC.
+
+
 - **The interrupt storm is fixed, and the mechanism I published yesterday was wrong.** Taking
   the fan's zone now parks its active trip at 95 °C and puts it back on release. Measured on
   the board: the conditions that gave **20,595/s** gave **0/s** with the trip parked, at a

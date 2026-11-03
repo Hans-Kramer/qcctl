@@ -40,8 +40,8 @@ source and not yet confirmed on hardware.
 
 ## Known, and not a gap
 
-- **The gate does not run the hardware checks, and cannot.** `tests/board-check.sh` is 39
+- **The gate does not run the hardware checks, and cannot.** `tests/board-check.sh` is 40
   checks that need a thermal governor reacting to a real temperature, a fan that turns, and
   a driver that clamps — none of which a runner has. It is a release step run by hand, and
-  nothing reminds anyone to run it. Last green **2026-10-25** (39 ok, 9m21s, native build
-  on the board), which is this tree. **[measured]**
+  nothing reminds anyone to run it. Last green **2026-11-03** (40 ok, 8m44s, native staging build on
+  the board, `STAGE=/tmp/qcctl-stage`). **[measured]**
