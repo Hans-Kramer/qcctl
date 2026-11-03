@@ -45,6 +45,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The interrupt storm has a cause, and yesterday's entry overstated what was known.**
+  Established 2026-11-03 by catching it live: it needs the zone `disabled` — which is what
+  owning the fan means here — **and** the die temperature wobbling across whichever trip
+  threshold was last armed. The thermal core does not service a zone it is not managing, so
+  nothing clears or re-arms that threshold and every crossing fires again. Either condition
+  alone is harmless, which is why four attempts to reproduce it from `mode=disabled` alone
+  all measured 0/s.
+
+  One-variable proof, taken while it was storming: `disabled` 19,783/s at 34.5 °C, `enabled`
+  0/s at 34.2 °C, still 0/s six seconds later at 33.8 °C — and the converse, `disabled`
+  again at 35.3 °C, quiet. Only `mode` changed between the first two.
+
+  **A fan curve meets this by design**, which is the part that matters: the kernel's active
+  trip is 38 °C with 3 °C of hysteresis, so its clear point is 35.0 °C, and a curve with a
+  38 °C point holds the board right there. The storming sample was at 34.9 °C.
+
+  Two things in yesterday's entry were wrong and are corrected. It said the storm *"stopped
+  dead the moment the hold was released"*; it does stop when the zone returns to `enabled`,
+  but it also stops on its own when the temperature drifts off the boundary, and I watched
+  that happen with nothing changed — so the release was not the only explanation available.
+  And the aftermath it described, a sensor going silent while the board climbed through its
+  trip, is the same mechanism seen from the other side rather than a separate fault.
+  `TODO.md` now carries a mitigation to try instead of an open question.
+
 - **Two measured thermal findings written down rather than left in a terminal.** Both came
   out of a board session on 2026-11-02 and both are in `docs/USAGE.md`'s troubleshooting
   section, with the open work in `TODO.md`:

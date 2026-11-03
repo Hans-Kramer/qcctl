@@ -28,16 +28,23 @@ source and not yet confirmed on hardware.
   does not ship behaviour it cannot demonstrate. Revisit when it resumes, or when `rtcwake`
   is shown to wake it. **[measured]**
 
-- **A tsens interrupt storm while the zone is held, cause unknown.** Measured on the board
-  2026-11-02: `irq/385-c263000.thermal-sensor` at **19,700/s** for ~6.5 minutes (3.9 million
-  interrupts, most of a core) while a `--cool-max` hold had `cpuss-0-0-thermal` `disabled`.
-  It stopped at exactly 0/s when the hold was released and the zone returned to `enabled`.
-  **Not reproducible on demand**: four controlled attempts measured 0/s — an unrelated zone
-  disabled, the fan's zone disabled with the fan high, the same with load pushing the
-  temperature up through the trip, and the same with the fan pulling it back down. So
-  `mode=disabled` alone is not the trigger and the real condition is still unidentified.
-  Documented in the README's *Limitations* and `docs/USAGE.md` as a symptom with a remedy
-  rather than a cause. **[measured]**
+- **Owning the fan zone storms the thermal sensor's interrupt, and the fix is ours to
+  make.** Cause established 2026-11-03: the zone being `disabled` — which is what owning the
+  fan means — plus the die temperature wobbling across the last-armed trip threshold, which
+  nothing re-arms while the core is not managing the zone. 19,700/s, a whole IRQ thread.
+  One-variable proof: `disabled` 19,783/s at 34.5 °C, `enabled` 0/s at 34.2 °C, and
+  `disabled` again at 35.3 °C quiet, so it is the boundary rather than the mode alone.
+
+  **A curve meets this by design**, which is what makes it worth fixing rather than
+  documenting: the kernel's active trip is 38 °C with 3 °C hysteresis, so the clear point is
+  35.0 °C, and a curve with a 38 °C point holds the board exactly there.
+
+  The mitigation to try: while this tool owns the zone, move the active trip out of the
+  board's operating range and restore it on release — `tests/board-check.sh` already does
+  exactly that write for its own purposes, so the mechanics are proven. What needs deciding
+  is what the trip should become while held (the passive trips at 130/135 °C must not be
+  touched), and what happens if the process dies between the two writes, which is the same
+  question the fan baseline already answers with a file. **[measured]**
 
 - **The fan watchdog does not consider `0` above the active trip to be impossible.** It
   watches for states 1–3, the band the governor cannot produce given a map floor of 4. But

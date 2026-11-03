@@ -642,24 +642,39 @@ What does work: `qcctl --cool-max`, which asks the daemon to take the zone and p
 ownership is the lock, so the write holds. A reboot restores the kernel's own threshold
 programming.
 
-**An `irq/…-thermal-sensor` thread is burning most of a core.** Measured once on a Ventuno
-Q, and worth recognising: `irq/385-c263000.thermal-sensor` ran at **19,700 interrupts per
-second** for about six and a half minutes — 3.9 million of them — while a `--cool-max` hold
-had the zone `disabled`. It stopped dead, at exactly 0/s, the moment the hold was released
-and the zone returned to `enabled`.
+**An `irq/…-thermal-sensor` thread is burning most of a core.** Measured on a Ventuno Q:
+**19,700 interrupts per second**, a full IRQ thread, for as long as the condition lasts — and
+it recurs. The cause is now known, and it needs two things at once:
 
-The cause is **not** established, and `mode=disabled` alone is not sufficient to cause it.
-Four controlled attempts failed to reproduce it on the same board: an unrelated zone
-disabled for five seconds; the fan's own zone disabled with the fan forced high; the same
-with load driving the temperature up through the trip; and the same again with the fan
-dropping it back. All four measured 0/s. So the trigger is some narrower interaction, and
-until it is pinned down the honest advice is just this: if you see it, release the hold and
-the storm stops.
+1. the zone is **`disabled`**, which is what any `qcctl` fan strategy or `--cool-max` hold
+   does, because ownership of the fan *is* the disabled mode; and
+2. the die temperature is **wobbling across whichever trip threshold was last armed**.
 
-Worth knowing about the aftermath, because it is the state the board was found in: after the
-storm the sensor went *silent* rather than returning to normal, and the temperature climbed
-from 36 °C to 44.9 °C straight through the 38 °C trip without a single interrupt. The active
-trip was no longer being serviced at all. A reboot is the way back.
+The thermal core does not service a zone it is not managing, so it never clears or re-arms
+that threshold: every crossing fires again immediately. Each condition alone is harmless.
+
+The proof is a one-variable test, run while it was storming:
+
+| | rate | temp |
+|---|---|---|
+| zone `disabled`, as found | **19,783/s** | 34.5 °C |
+| `mode` set to `enabled` | **0/s** | 34.2 °C |
+| still `enabled`, six seconds later | **0/s** | 33.8 °C |
+
+and the converse: `disabled` at 35.3–35.7 °C, a few tenths *above* the boundary, measured
+0/s. Only `mode` changed between the first two rows.
+
+**Why a fan curve meets this routinely.** A curve with `POINT 38C STATE 4` and the kernel's
+own active trip at 38 °C with 3 °C of hysteresis has its clear point at **35.0 °C** — and the
+curve then holds the board right there, because that is what a curve does. The storming
+sample above was at 34.9 °C.
+
+**What to do.** Writing `enabled` to the zone's `mode` stops it instantly, but that also
+hands the fan back, so a curve in force will take it again within a tick and the condition
+can return. Switching to a profile with no fan strategy — the shipped `balanced` — leaves the
+zone enabled and the kernel in charge, which avoids it entirely. Nothing is at risk while it
+storms: the fan still runs, the readings are still correct, and the cost is one core's worth
+of interrupt handling.
 
 **`airflow` says `unknown`.** It is being judged and there is no signal right now: the fan
 is below state 2, its tachometer is not to be believed, or the state changed within the
